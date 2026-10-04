@@ -113,18 +113,7 @@ public enum Pinyin {
         for token in tokens {
             switch token {
             case let .syllable(syllable):
-                if let previous = previousSyllable {
-                    if style == .numeric || style == .diacriticSpaced {
-                        out += " "
-                    } else if needsApostrophe(after: previous, before: syllable) {
-                        out += "'"
-                    }
-                } else if !out.isEmpty, !out.hasSuffix(" ") {
-                    // Follows a literal or an unknown rather than a syllable.
-                    // Without this the letter names in `A A zhi4` run into the
-                    // reading after them, giving `A Azhì`.
-                    out += " "
-                }
+                out += joiner(before: syllable, after: previousSyllable, style: style, out: out)
                 out += rendered(syllable, style: style)
                 previousSyllable = syllable
 
@@ -148,6 +137,29 @@ public enum Pinyin {
             }
         }
         return out
+    }
+
+    /// What, if anything, goes between the previous output and this syllable.
+    ///
+    /// Three cases: a spaced style always separates; a syllable following
+    /// another may need an apostrophe; and a syllable following a literal or
+    /// an unknown needs a space, without which the letter names in
+    /// `A A zhi4` run into the reading after them.
+    private static func joiner(
+        before syllable: PinyinSyllable,
+        after previous: PinyinSyllable?,
+        style: PinyinStyle,
+        out: String,
+    )
+        -> String
+    {
+        guard let previous else {
+            return out.isEmpty || out.hasSuffix(" ") ? "" : " "
+        }
+        if style == .numeric || style == .diacriticSpaced {
+            return " "
+        }
+        return needsApostrophe(after: previous, before: syllable) ? "'" : ""
     }
 
     private static func rendered(_ syllable: PinyinSyllable, style: PinyinStyle) -> String {
