@@ -92,31 +92,9 @@ enum ReaderFixtures {
         return DictionaryRepairPass(lexicon: lexicon).repair(segmented)
     }
 
-    /// Readings keyed by token, as the reader's model would supply them.
-    static func readings(for document: SegmentedDocument) -> [TokenID: TokenReading] {
-        var result: [TokenID: TokenReading] = [:]
-        for block in document.blocks {
-            for token in block.tokens {
-                if let reading = readingsByWord[token.text] {
-                    result[token.id] = reading
-                }
-            }
-        }
-        return result
-    }
-
-    /// Every token whose text appears in `words`, as a stand-in for a reveal
-    /// set covering all occurrences of a lemma.
-    static func tokens(matching lemmas: Set<String>, in document: SegmentedDocument)
-        -> Set<TokenID>
-    {
-        var result: Set<TokenID> = []
-        for block in document.blocks {
-            for token in block.tokens where lemmas.contains(token.text) {
-                result.insert(token.id)
-            }
-        }
-        return result
+    /// Every token whose text appears in `lemmas`, as a reveal set.
+    static func reveal(of lemmas: Set<String>) -> RevealSet {
+        RevealSet(mode: .allOccurrences, lemmas: lemmas)
     }
 }
 
@@ -163,10 +141,9 @@ private struct FixturePreview: View {
         ReaderSurface(
             document: document,
             style: style,
-            readings: ReaderFixtures.readings(for: document),
+            readings: ReaderFixtures.readingsByWord,
             selection: selection,
-            revealed: ReaderFixtures.tokens(matching: revealed, in: document)
-                .union(selection.map { [$0] } ?? []),
+            reveal: ReaderFixtures.reveal(of: revealed),
             onTap: { selection = selection == $0 ? nil : $0 },
             topBlock: $topBlock,
         )

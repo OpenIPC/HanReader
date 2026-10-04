@@ -17,9 +17,9 @@ import SwiftUI
 struct ReaderSurface: View {
     let document: SegmentedDocument
     let style: ReaderStyle
-    let readings: [TokenID: TokenReading]
+    let readings: [String: TokenReading]
     let selection: TokenID?
-    let revealed: Set<TokenID>
+    let reveal: RevealSet
     let onTap: (TokenID) -> Void
 
     /// The block at the top of the viewport.
@@ -38,7 +38,7 @@ struct ReaderSurface: View {
                         style: style,
                         readings: readings,
                         selection: selection,
-                        revealed: revealed,
+                        reveal: reveal,
                         onTap: onTap,
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)

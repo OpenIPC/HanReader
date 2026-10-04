@@ -67,16 +67,16 @@ struct ReaderLayoutRenderTests {
         _ block: TextBlock,
         style: ReaderStyle,
         width: Double,
-        revealed: Set<TokenID>,
+        reveal: RevealSet,
     )
         -> Double?
     {
         let view = ParagraphView(
             block: block,
             style: style,
-            readings: ReaderFixtures.readings(for: document),
+            readings: ReaderFixtures.readingsByWord,
             selection: nil,
-            revealed: revealed,
+            reveal: reveal,
             onTap: { _ in },
         )
         let renderer = ImageRenderer(content: view.frame(width: width))
@@ -94,8 +94,11 @@ struct ReaderLayoutRenderTests {
             .max { $0.tokens.count < $1.tokens.count } ?? document.blocks[0]
     }
 
-    private func allWords(of block: TextBlock) -> Set<TokenID> {
-        Set(block.tokens.filter(\.isLookupCandidate).map(\.id))
+    private func allWords(of block: TextBlock) -> RevealSet {
+        RevealSet(
+            mode: .allOccurrences,
+            lemmas: Set(block.tokens.filter(\.isLookupCandidate).map(\.text)),
+        )
     }
 
     /// A reading far wider than the single glyph it annotates, so that
@@ -187,10 +190,15 @@ struct ReaderLayoutRenderTests {
 
         for width in stride(from: 180.0, through: 620.0, by: 11) {
             let bare = try #require(
-                paragraphHeight(block, style: style, width: width, revealed: []),
+                paragraphHeight(
+                    block,
+                    style: style,
+                    width: width,
+                    reveal: RevealSet(mode: .allOccurrences),
+                ),
             )
             let shown = try #require(
-                paragraphHeight(block, style: style, width: width, revealed: revealed),
+                paragraphHeight(block, style: style, width: width, reveal: revealed),
             )
             #expect(bare == shown, "reflowed at width \(width), size \(fontSize)")
         }
@@ -214,10 +222,20 @@ struct ReaderLayoutRenderTests {
         // width where it happens to differ.
         for width in stride(from: 180.0, through: 620.0, by: 11) {
             let tall = try #require(
-                paragraphHeight(block, style: separated, width: width, revealed: []),
+                paragraphHeight(
+                    block,
+                    style: separated,
+                    width: width,
+                    reveal: RevealSet(mode: .allOccurrences),
+                ),
             )
             let short = try #require(
-                paragraphHeight(block, style: continuous, width: width, revealed: []),
+                paragraphHeight(
+                    block,
+                    style: continuous,
+                    width: width,
+                    reveal: RevealSet(mode: .allOccurrences),
+                ),
             )
             #expect(short <= tall, "continuous was taller at width \(width)")
             sawSaving = sawSaving || short < tall
@@ -229,7 +247,12 @@ struct ReaderLayoutRenderTests {
     func wrappedParagraphIsMultipleLines() throws {
         let style = ReaderStyle(fontSize: 22, spacing: .separated)
         let height = try #require(
-            paragraphHeight(paragraph, style: style, width: 200, revealed: []),
+            paragraphHeight(
+                paragraph,
+                style: style,
+                width: 200,
+                reveal: RevealSet(mode: .allOccurrences),
+            ),
         )
         #expect(height > ReaderFlow.lineHeight(style) + style.lineGap)
     }
@@ -239,7 +262,12 @@ struct ReaderLayoutRenderTests {
         let style = ReaderStyle(fontSize: 22)
         let blank = try #require(document.blocks.first { $0.kind == .blankLine })
         let height = try #require(
-            paragraphHeight(blank, style: style, width: 300, revealed: []),
+            paragraphHeight(
+                blank,
+                style: style,
+                width: 300,
+                reveal: RevealSet(mode: .allOccurrences),
+            ),
         )
         #expect(abs(height - style.blankLineHeight.rounded()) <= 1)
     }
