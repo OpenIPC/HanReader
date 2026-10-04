@@ -1,0 +1,13 @@
+// iOS-only settings.
+
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+INFOPLIST_FILE = Apps/iOS/Info.plist
+CODE_SIGN_ENTITLEMENTS = Apps/iOS/HanReader-iOS.entitlements
+TARGETED_DEVICE_FAMILY = 1,2
+
+// No account, certificate or provisioning profile needed for the simulator --
+// which is the path a contributor with a free Apple ID (or none) uses, and the
+// path CI uses. Device builds still need a Personal Team, set in Local.xcconfig.
+CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =
+CODE_SIGN_STYLE = Automatic

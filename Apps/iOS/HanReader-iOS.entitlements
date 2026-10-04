@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Intentionally empty.
+	     iOS apps are always sandboxed, and UIDocumentPickerViewController
+	     grants access to the files the user picks without any entitlement.
+	     com.apple.security.files.user-selected.read-only belongs to the macOS
+	     App Sandbox; requesting it here would make a device build demand a
+	     capability no iOS provisioning profile grants. The equivalent macOS
+	     file lives at Apps/macOS/HanReader-macOS.entitlements and is also
+	     empty, because that app is not sandboxed. -->
+</dict>
+</plist>

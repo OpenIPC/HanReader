@@ -1,0 +1,108 @@
+# XcodeGen manifest. Generated into HanReader.xcodeproj by `make generate`;
+# the project itself is not committed.
+#
+# This file is deliberately thin. The real target graph lives in Package.swift,
+# and these two targets exist only to wrap HanReaderUI in a launchable bundle.
+
+name: HanReader
+
+options:
+  bundleIdPrefix: org.openipc
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  defaultConfig: Debug
+  groupSortPosition: top
+
+configs:
+  Debug: debug
+  Release: release
+
+configFiles:
+  Debug: Apps/Shared/Config/Debug.xcconfig
+  Release: Apps/Shared/Config/Release.xcconfig
+
+packages:
+  HanReaderKit:
+    path: .
+
+# Two targets rather than one multiplatform target with
+# `supportedDestinations: [macOS, iOS]`. The multiplatform form is tempting and
+# XcodeGen supports it, but three things it cannot express are all needed here:
+# entitlements are per-target rather than per-destination (macOS wants the
+# hardened runtime, iOS wants a read-only file entitlement), the Info.plists
+# genuinely differ (LSApplicationCategoryType and automatic termination versus a
+# scene manifest, orientations and background audio), and the two need separate
+# signing configuration. One target template with ${platform} substitution gives
+# the same deduplication with none of those collisions.
+targetTemplates:
+  App:
+    type: application
+    # NOTE: `platform` is deliberately NOT set here. XcodeGen resolves it before
+    # templateAttributes substitution, so `platform: ${platform}` yields macOS
+    # for both targets -- producing an iOS target with SUPPORTED_PLATFORMS set
+    # to macosx, which then fails to match any simulator destination. It is
+    # declared on each concrete target below instead. ${platform} still works
+    # fine in the paths and configFiles, which are plain strings.
+    sources:
+      - path: Apps/Shared
+        excludes: ["Config/**"]
+      - path: Apps/${platform}
+        excludes: ["Info.plist", "*.entitlements"]
+      # The compiled dictionary, once M3 produces one. Optional so a clean
+      # checkout builds before the pipeline has run.
+      - path: Resources/Generated
+        buildPhase: resources
+        optional: true
+        createIntermediateGroups: true
+    dependencies:
+      - package: HanReaderKit
+        product: HanReaderUI
+    settings:
+      base:
+        PRODUCT_NAME: HanReader
+        PRODUCT_BUNDLE_IDENTIFIER: $(HANREADER_BUNDLE_ID)
+        MARKETING_VERSION: $(HANREADER_VERSION)
+        CURRENT_PROJECT_VERSION: $(HANREADER_BUILD)
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+
+targets:
+  HanReader-macOS:
+    templates: [App]
+    platform: macOS
+    templateAttributes:
+      platform: macOS
+    configFiles:
+      Debug: Apps/Shared/Config/macOS.xcconfig
+      Release: Apps/Shared/Config/macOS.xcconfig
+
+  HanReader-iOS:
+    templates: [App]
+    platform: iOS
+    templateAttributes:
+      platform: iOS
+    configFiles:
+      Debug: Apps/Shared/Config/iOS.xcconfig
+      Release: Apps/Shared/Config/iOS.xcconfig
+
+schemes:
+  HanReader-macOS:
+    build:
+      targets:
+        HanReader-macOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+  HanReader-iOS:
+    build:
+      targets:
+        HanReader-iOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release

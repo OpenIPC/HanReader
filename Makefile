@@ -118,6 +118,10 @@ run-ios: generate ## Build and launch the app in the iOS Simulator
 	@xcodebuild build \
 		-project $(PROJECT) -scheme HanReader-iOS -configuration Debug \
 		-destination '$(IOS_DEST)' -derivedDataPath $(BUILD_DIR) -quiet
+	@# The bundle identifier is read back from the built app rather than
+	@# hard-coded: HANREADER_BUNDLE_ID_PREFIX is documented as overridable in
+	@# Local.xcconfig, so a literal org.openipc.hanreader would install one app
+	@# and then launch a different one.
 	@# Target the requested device by UDID throughout. `simctl install booted`
 	@# would install into whichever simulator happens to be booted -- a different
 	@# device than the one just built for, or none at all.
@@ -132,8 +136,10 @@ print(next((x['udid'] for v in d.values() for x in v if x['name']=='$(IOS_DEVICE
 	fi; \
 	xcrun simctl bootstatus "$$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$$udid"; \
 	open -a Simulator --args -CurrentDeviceUDID "$$udid"; \
-	xcrun simctl install "$$udid" "$(BUILD_DIR)/Build/Products/Debug-iphonesimulator/HanReader.app"; \
-	xcrun simctl launch "$$udid" org.openipc.hanreader
+	app="$(BUILD_DIR)/Build/Products/Debug-iphonesimulator/HanReader.app"; \
+	xcrun simctl install "$$udid" "$$app"; \
+	bundle_id="$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$$app/Info.plist")"; \
+	xcrun simctl launch "$$udid" "$$bundle_id"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
