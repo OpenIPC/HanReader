@@ -72,5 +72,15 @@ it needs to read like release notes rather than a commit log.
   relational rather than a packed string, audio paths are relative so they
   survive an iOS restore, and deleting a text actually removes everything
   attached to it.
+- The reading surface: pinyin rendered as a ruby annotation above each word,
+  tap to reveal, and both word-spacing modes. Revealing a word cannot move any
+  other word — the space for a reading is reserved whether or not one is
+  shown, so the page never reflows as you read. Paragraphs are laid out and
+  measured one at a time, so a book-length text costs the same as a short one.
+- A design system of em ratios rather than fixed sizes, so the spacing the
+  prototype was tuned at 22pt stays correct from 14pt to 48pt.
+- [Docs/fidelity.md](Docs/fidelity.md), which states behaviourally what
+  "faithful to the prototype" means across two platforms, and names the test
+  that enforces each part.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main
