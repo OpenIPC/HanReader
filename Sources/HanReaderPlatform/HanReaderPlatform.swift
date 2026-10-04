@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 
 /// Namespace for the `HanReaderPlatform` module.
 ///
@@ -14,7 +14,7 @@ public import HanReaderCore
 /// that a `NotificationCenter` broadcast cannot.
 ///
 /// - Note: This is scaffolding. The shims arrive alongside the UI in M5.
-public enum HanReaderPlatform: HanReaderModule {
-    public static let moduleName = "HanReaderPlatform"
-    public static let moduleDependencies = [HanReaderCore.moduleName]
+public enum HanReaderPlatform {
+    /// Proves at compile time that this module links `HanReaderCore`.
+    public static let coreVersion = HanReaderCore.version
 }

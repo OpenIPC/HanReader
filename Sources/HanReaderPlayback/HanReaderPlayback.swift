@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 
 /// Namespace for the `HanReaderPlayback` module.
 ///
@@ -11,7 +11,7 @@ public import HanReaderCore
 /// while macOS requires none of it.
 ///
 /// - Note: This is scaffolding. Playback arrives in milestone M7.
-public enum HanReaderPlayback: HanReaderModule {
-    public static let moduleName = "HanReaderPlayback"
-    public static let moduleDependencies = [HanReaderCore.moduleName]
+public enum HanReaderPlayback {
+    /// Proves at compile time that this module links `HanReaderCore`.
+    public static let coreVersion = HanReaderCore.version
 }

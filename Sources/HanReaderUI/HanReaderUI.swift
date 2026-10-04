@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 import HanReaderDictionaryImport
 import HanReaderPersistence
 import HanReaderPlatform
@@ -16,14 +16,19 @@ import HanReaderTokenization
 /// permitted.
 ///
 /// - Note: This is scaffolding. The reader arrives in milestone M5.
-public enum HanReaderUI: HanReaderModule {
-    public static let moduleName = "HanReaderUI"
-    public static let moduleDependencies = [
-        HanReaderCore.moduleName,
-        HanReaderTokenization.moduleName,
-        HanReaderPersistence.moduleName,
-        HanReaderDictionaryImport.moduleName,
-        HanReaderPlayback.moduleName,
-        HanReaderPlatform.moduleName,
+public enum HanReaderUI {
+    /// Proves at compile time that this module links every engine module.
+    ///
+    /// Each entry resolves through a different module, so dropping any one
+    /// dependency from `Package.swift` stops this compiling. What the package
+    /// graph actually *declares* is asserted separately, against the manifest
+    /// itself, by the `architecture` CI job.
+    public static let linkedVersions = [
+        HanReaderCore.version,
+        HanReaderTokenization.coreVersion,
+        HanReaderPersistence.coreVersion,
+        HanReaderDictionaryImport.linkedVersions.first ?? "",
+        HanReaderPlayback.coreVersion,
+        HanReaderPlatform.coreVersion,
     ]
 }

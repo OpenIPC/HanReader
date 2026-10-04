@@ -11,29 +11,24 @@ import Foundation
 /// It imports **only Foundation**. That constraint is not stylistic — it keeps
 /// the bulk of the test suite runnable in seconds with no simulator, it keeps
 /// segmentation testable against a deterministic engine rather than against
-/// Apple's closed `NLTokenizer`, and it gives the architecture a boundary that
-/// a build can check. A Linux CI job compiles this target in isolation, which
-/// is what actually enforces the rule: `NaturalLanguage` and `AVFoundation` are
-/// every bit as Apple-only as `AppKit`, so forbidding only `AppKit` would be
-/// too weak a test.
+/// Apple's closed `NLTokenizer`, and it gives the architecture a boundary a
+/// build can check.
+///
+/// Three CI checks enforce it together, because no one of them is sufficient:
+/// an import allowlist proves the Foundation-only rule itself; compiling this
+/// target inside a Linux container proves it genuinely builds off-Apple; and a
+/// check against the package manifest catches a dependency added to
+/// `Package.swift` that no source file has started using yet. A Linux build
+/// alone would happily accept `import Dispatch`.
 ///
 /// - Note: This is scaffolding. The domain model arrives in milestone M2.
-public enum HanReaderCore: HanReaderModule {
-    public static let moduleName = "HanReaderCore"
-    public static let moduleDependencies: [String] = []
-}
+public enum HanReaderCore {
 
-/// Describes a module's position in the package graph.
-///
-/// Conformances exist so that the linkage tests can assert the dependency graph
-/// matches what `Package.swift` declares, catching a module that silently loses
-/// or gains a dependency during a refactor.
-///
-/// - Note: Scaffolding for milestone M1; expected to be removed once each
-///   module carries real public API worth asserting against instead.
-public protocol HanReaderModule: Sendable {
-    /// The module's own name.
-    static var moduleName: String { get }
-    /// The names of the HanReader modules this one links against directly.
-    static var moduleDependencies: [String] { get }
+    /// The HanReader version, and the single source of truth for it.
+    ///
+    /// Read by `hanreader-dictgen --version` and recorded in generated
+    /// dictionary containers so a database can be traced to the build that
+    /// produced it. The application targets' `MARKETING_VERSION` is derived
+    /// from this value rather than maintained separately.
+    public static let version = "0.1.0-dev"
 }

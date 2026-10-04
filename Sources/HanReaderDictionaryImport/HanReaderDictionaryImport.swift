@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 import HanReaderPersistence
 
 /// Namespace for the `HanReaderDictionaryImport` module.
@@ -17,10 +17,10 @@ import HanReaderPersistence
 /// inside the same transaction as the batch it describes.
 ///
 /// - Note: This is scaffolding. CC-CEDICT ingestion arrives in M3, DSL in M6.
-public enum HanReaderDictionaryImport: HanReaderModule {
-    public static let moduleName = "HanReaderDictionaryImport"
-    public static let moduleDependencies = [
-        HanReaderCore.moduleName,
-        HanReaderPersistence.moduleName,
+public enum HanReaderDictionaryImport {
+    /// Proves at compile time that this module links both of its dependencies.
+    public static let linkedVersions = [
+        HanReaderCore.version,
+        HanReaderPersistence.coreVersion,
     ]
 }

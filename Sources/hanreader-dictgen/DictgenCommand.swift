@@ -27,26 +27,24 @@ struct Dictgen: AsyncParsableCommand {
         commandName: "hanreader-dictgen",
         abstract: "Compile a source dictionary into a HanReader dictionary container.",
         discussion: """
-        Subcommands for CC-CEDICT and ABBYY DSL input arrive in milestones M3 \
-        and M6 respectively. This build reports the tool and package version so \
-        that the build pipeline wiring can be verified end to end first.
+        The cedict and dsl subcommands arrive in milestones M3 and M6 \
+        respectively. This build exists so that the dictionary pipeline's \
+        wiring -- package graph, build plugin, and CI invocation -- can be \
+        verified end to end before there is a parser behind it.
         """,
-        version: Dictgen.versionString
+        version: HanReaderCore.version
     )
 
-    static var versionString: String {
-        "hanreader-dictgen \(HanReaderCore.moduleName) scaffold"
-    }
-
     func run() async throws {
-        // Referencing each module keeps the executable's link graph honest:
-        // if a dependency is dropped from Package.swift, this stops compiling.
+        // Touching a symbol from each dependency keeps the executable's link
+        // graph honest: drop one from Package.swift and this stops compiling.
         let linked = [
-            HanReaderCore.moduleName,
-            HanReaderPersistence.moduleName,
-            HanReaderDictionaryImport.moduleName,
+            "HanReaderCore \(HanReaderCore.version)",
+            "HanReaderPersistence \(HanReaderPersistence.coreVersion)",
+            "HanReaderDictionaryImport \(HanReaderDictionaryImport.linkedVersions.count) deps",
         ]
-        print("hanreader-dictgen scaffold — linked modules: \(linked.joined(separator: ", "))")
+        print("hanreader-dictgen \(HanReaderCore.version) (scaffold)")
+        print("linked: \(linked.joined(separator: ", "))")
         print("Dictionary subcommands arrive in milestone M3 (CC-CEDICT) and M6 (DSL).")
     }
 }

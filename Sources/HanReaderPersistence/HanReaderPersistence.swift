@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 
 /// Namespace for the `HanReaderPersistence` module.
 ///
@@ -17,7 +17,7 @@ public import HanReaderCore
 /// an in-memory database is one line, making persistence tests hermetic.
 ///
 /// - Note: This is scaffolding. The schema and migrations arrive in M2.
-public enum HanReaderPersistence: HanReaderModule {
-    public static let moduleName = "HanReaderPersistence"
-    public static let moduleDependencies = [HanReaderCore.moduleName]
+public enum HanReaderPersistence {
+    /// Proves at compile time that this module links `HanReaderCore`.
+    public static let coreVersion = HanReaderCore.version
 }

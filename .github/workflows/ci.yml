@@ -149,33 +149,56 @@ jobs:
     # logic breaks.
     name: Swift package tests
     runs-on: macos-26
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
 
-      - name: Confirm the pinned toolchain is the one we got
-        # The macos-26 image carries exactly one Xcode major, so DEVELOPER_DIR
-        # is deterministic -- but GitHub replaces patch releases in place, so
-        # fail with a readable message rather than a strange compile error.
+      - name: Select the pinned toolchain
+        # .xcode-version is the single source of truth: DEVELOPER_DIR is derived
+        # from it rather than hard-coded, so the two cannot drift apart. If the
+        # pinned Xcode is absent -- GitHub replaces patch releases in place --
+        # fail here with a readable message and the list of what is installed,
+        # rather than letting the build proceed on an unpinned compiler or die
+        # on a raw `xcodebuild` error several steps later.
         run: |
           set -euo pipefail
-          expected=$(tr -d '[:space:]' < .xcode-version 2>/dev/null || echo "")
+          pinned=$(tr -d '[:space:]' < .xcode-version)
+          [ -n "$pinned" ] || { echo "::error file=.xcode-version::file is empty"; exit 1; }
+
+          dir=""
+          for candidate in "/Applications/Xcode_${pinned}.app" "/Applications/Xcode_${pinned}".*.app; do
+            if [ -d "$candidate/Contents/Developer" ]; then dir="$candidate/Contents/Developer"; break; fi
+          done
+
+          if [ -z "$dir" ]; then
+            echo "::error file=.xcode-version::Xcode $pinned is not installed on this runner."
+            echo "Available Xcode versions:"
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none found)"
+            exit 1
+          fi
+
+          echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
+          echo "Selected $dir"
+
+      - name: Report toolchain and record its identity for the cache key
+        run: |
+          set -euo pipefail
           xcodebuild -version
           swift --version
-          if [ -n "$expected" ]; then
-            actual=$(xcodebuild -version | head -1 | awk '{print $2}')
-            case "$actual" in
-              "$expected"*) ;;
-              *) echo "::warning::Xcode $actual present, .xcode-version pins $expected" ;;
-            esac
-          fi
+          # The compiler identity, not just the Xcode marketing version, so a
+          # toolchain change always invalidates the build cache.
+          swift --version 2>&1 | head -2 > .toolchain-id
+          cat .toolchain-id
 
       - uses: actions/cache@v4
         with:
           path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          # Keyed on the compiler identity as well as the dependency graph.
+          # Without the toolchain in the key, an in-place Xcode patch update
+          # restores modules built by the previous compiler, which can fail to
+          # link in confusing ways.
+          key: spm-${{ runner.os }}-${{ hashFiles('.toolchain-id') }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ hashFiles('.toolchain-id') }}-
 
       - name: Build, treating warnings as errors
         run: swift build --build-tests -Xswiftc -warnings-as-errors
@@ -183,12 +206,13 @@ jobs:
       - name: Test
         run: swift test --skip-build
 
-  linux-core:
-    # This job is the architecture. HanReaderCore must import nothing but
-    # Foundation, and "no AppKit" is far too weak a rule to express that --
-    # NaturalLanguage and AVFoundation are every bit as Apple-only. Compiling
-    # the target on Linux is a check that cannot be argued with.
-    name: Core builds on Linux
+  architecture:
+    # The module boundaries, checked three ways. No one of these is sufficient:
+    # a Linux build proves portability but would happily accept `import
+    # Dispatch`; an import allowlist proves the stated rule but not that the
+    # code actually compiles off-Apple; and neither notices a dependency added
+    # in Package.swift that no source file has started using yet.
+    name: Architecture boundaries
     runs-on: ubuntu-latest
     container: swift:6.2
     steps:
@@ -196,6 +220,99 @@ jobs:
 
       - name: Toolchain
         run: swift --version
+
+      - name: HanReaderCore imports only Foundation
+        run: |
+          set -euo pipefail
+          # Allowlist, not a denylist. "No AppKit" would be far too weak a rule:
+          # NaturalLanguage and AVFoundation are every bit as Apple-only, and so
+          # is Dispatch-plus-Darwin. Anything not named here is a boundary
+          # violation and must be justified by editing this list.
+          allowed='^(Foundation|FoundationEssentials)$'
+          violations=0
+          while IFS= read -r file; do
+            while IFS= read -r module; do
+              [ -n "$module" ] || continue
+              if ! printf '%s' "$module" | grep -qE "$allowed"; then
+                echo "::error file=$file::HanReaderCore may not import '$module' (allowed: Foundation, FoundationEssentials)"
+                violations=1
+              fi
+            done < <(
+              grep -hoE '^[[:space:]]*(public |package |internal )?import [A-Za-z_][A-Za-z0-9_]*' "$file" \
+                | awk '{print $NF}'
+            )
+          done < <(find Sources/HanReaderCore -name '*.swift')
+          [ "$violations" -eq 0 ] && echo "Core imports are clean."
+          exit $violations
+
+      - name: Package manifest declares the intended graph
+        # Reads the manifest itself rather than trusting constants maintained by
+        # hand in the sources, which could only ever restate themselves.
+        run: |
+          set -euo pipefail
+          swift package dump-package > /tmp/pkg.json
+          python3 - <<'PY'
+          import json, sys
+
+          pkg = json.load(open("/tmp/pkg.json"))
+          targets = {t["name"]: t for t in pkg["targets"]}
+          failures = []
+
+          def deps(name):
+              """Names this target depends on, whether sibling targets or products."""
+              out = set()
+              for d in targets[name].get("dependencies", []):
+                  if "byName" in d and d["byName"] and d["byName"][0]:
+                      out.add(d["byName"][0])
+                  if "target" in d and d["target"] and d["target"][0]:
+                      out.add(d["target"][0])
+                  if "product" in d and d["product"] and d["product"][0]:
+                      out.add(d["product"][0])
+              return out
+
+          def check(cond, msg):
+              if not cond:
+                  failures.append(msg)
+
+          expected = {
+              "HanReaderCore": set(),
+              "HanReaderTokenization": {"HanReaderCore"},
+              "HanReaderPersistence": {"HanReaderCore", "GRDB"},
+              "HanReaderDictionaryImport": {"HanReaderCore", "HanReaderPersistence"},
+              "HanReaderPlayback": {"HanReaderCore"},
+              "HanReaderPlatform": {"HanReaderCore"},
+              "HanReaderUI": {
+                  "HanReaderCore", "HanReaderTokenization", "HanReaderPersistence",
+                  "HanReaderDictionaryImport", "HanReaderPlayback", "HanReaderPlatform",
+              },
+              "hanreader-dictgen": {
+                  "HanReaderCore", "HanReaderPersistence",
+                  "HanReaderDictionaryImport", "ArgumentParser",
+              },
+          }
+
+          for name, want in expected.items():
+              check(name in targets, f"target '{name}' is missing from the manifest")
+              if name in targets:
+                  got = deps(name)
+                  check(got == want, f"{name} depends on {sorted(got)}, expected {sorted(want)}")
+
+          # The rules that matter most, stated independently of the table above
+          # so that a careless edit to it still trips them.
+          check(deps("HanReaderCore") == set(), "HanReaderCore must be a leaf")
+          grdb = {n for n in targets if "GRDB" in deps(n)}
+          check(grdb == {"HanReaderPersistence"},
+                f"only HanReaderPersistence may depend on GRDB, found {sorted(grdb)}")
+          ap = {n for n in targets if "ArgumentParser" in deps(n)}
+          check(ap == {"hanreader-dictgen"},
+                f"only hanreader-dictgen may depend on ArgumentParser, found {sorted(ap)}")
+
+          for f in failures:
+              print(f"::error file=Package.swift::{f}")
+          if failures:
+              sys.exit(1)
+          print(f"Manifest graph matches: {len(expected)} targets checked.")
+          PY
 
       - name: Build HanReaderCore in isolation
         run: swift build --target HanReaderCore -Xswiftc -warnings-as-errors
@@ -205,7 +322,7 @@ jobs:
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene, spm-test, linux-core]
+    needs: [hygiene, spm-test, architecture]
     if: always()
     steps:
       - name: Verify all required jobs succeeded

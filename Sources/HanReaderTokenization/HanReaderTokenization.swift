@@ -1,7 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Foundation
-public import HanReaderCore
+import HanReaderCore
 
 /// Namespace for the `HanReaderTokenization` module.
 ///
@@ -13,7 +13,7 @@ public import HanReaderCore
 /// reachable through the same `Tokenizing` seam.
 ///
 /// - Note: This is scaffolding. The segmenters arrive in milestone M4.
-public enum HanReaderTokenization: HanReaderModule {
-    public static let moduleName = "HanReaderTokenization"
-    public static let moduleDependencies = [HanReaderCore.moduleName]
+public enum HanReaderTokenization {
+    /// Proves at compile time that this module links `HanReaderCore`.
+    public static let coreVersion = HanReaderCore.version
 }
