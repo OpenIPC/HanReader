@@ -83,6 +83,19 @@ nonisolated struct ReaderStyle: Hashable, Sendable {
     /// targets below the 44pt minimum.
     static let compactFontSizeFloor = 18.0
 
+    /// How many characters a line may hold before the column stops widening.
+    ///
+    /// Measured in **characters**, not points, because that is what line
+    /// length means for reading: 30 to 40 is the comfortable range for CJK,
+    /// and 40 is the top of it, so the column uses as much of a wide window
+    /// as it can without the eye losing the start of the next line.
+    ///
+    /// A fixed point value cannot express this. The 720pt cap it replaces
+    /// gave 32 characters at 22pt — reasonable — and **15 characters at
+    /// 48pt**, which is a column two words wide for exactly the reader who
+    /// enlarged the text in order to read it more easily.
+    static let maximumCharactersPerLine = 40.0
+
     // MARK: - Resolved values
 
     let spacing: WordSpacing
@@ -103,6 +116,15 @@ nonisolated struct ReaderStyle: Hashable, Sendable {
     let lineGap: Double
     let paragraphGap: Double
     let blankLineHeight: Double
+
+    /// How wide the reading column may grow.
+    ///
+    /// A Han glyph is one em wide — the square em is the point of the
+    /// script — so a character count converts to points by multiplying by
+    /// the font size.
+    var maximumColumnWidth: Double {
+        fontSize * Self.maximumCharactersPerLine
+    }
 
     /// Whether a token's width grows to fit its reading.
     ///

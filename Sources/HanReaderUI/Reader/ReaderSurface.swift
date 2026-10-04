@@ -46,7 +46,7 @@ struct ReaderSurface: View {
                 }
             }
             .scrollTargetLayout()
-            .frame(maxWidth: ReaderMetrics.readingColumnMaxWidth, alignment: .leading)
+            .frame(maxWidth: style.maximumColumnWidth, alignment: .leading)
             .padding(.horizontal, ReaderMetrics.readingColumnPadding)
             // Room above the first line for a revealed reading on it.
             //

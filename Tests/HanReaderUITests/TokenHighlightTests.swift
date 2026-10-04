@@ -39,6 +39,26 @@ struct TokenHighlightTests {
         #expect(increased.fillOpacity > normal.fillOpacity)
     }
 
+    /// The fill shipped at 0.08, which composites to a 1.11:1 contrast ratio
+    /// against white and 1.08:1 against the macOS dark background — too
+    /// faint to read as a marker. The floor here stops it drifting back
+    /// without anyone noticing, since nothing else in the suite would fail.
+    @Test("A revealed word is actually visible")
+    func revealedIsVisible() {
+        #expect(TokenHighlight.resolve(.revealed).fillOpacity >= 0.12)
+        #expect(TokenHighlight.resolve(.selected).fillOpacity >= 0.25)
+    }
+
+    /// Quiet, though. The reading printed above the word is the primary
+    /// signal; a page with two hundred revealed words should not become a
+    /// wall of colour.
+    @Test("A revealed word stays quieter than the selected one")
+    func revealedStaysQuiet() {
+        let revealed = TokenHighlight.resolve(.revealed)
+        #expect(revealed.fillOpacity <= 0.20)
+        #expect(TokenHighlight.resolve(.selected).fillOpacity > revealed.fillOpacity * 1.5)
+    }
+
     /// Reveal state must survive a reader who has asked the system not to
     /// rely on colour. An 8%-opacity accent fill was the prototype's only
     /// signal, and it is invisible to exactly that reader.

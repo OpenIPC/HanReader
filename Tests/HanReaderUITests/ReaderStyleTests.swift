@@ -98,6 +98,27 @@ struct ReaderStyleTests {
         #expect(!ReaderStyle(fontSize: 22, spacing: .continuous).reservesRubyWidth)
     }
 
+    /// The regression a fixed point cap caused, as a test. 720 points gave
+    /// 32 characters a line at 22pt and **15 at 48pt** — a column two words
+    /// wide for exactly the reader who enlarged the text to read it.
+    @Test("The column holds the same number of characters at every size")
+    func columnMeasuredInCharacters() {
+        for size in [14.0, 22.0, 36.0, 48.0] {
+            let style = ReaderStyle(fontSize: size)
+            let characters = style.maximumColumnWidth / style.fontSize
+            #expect(abs(characters - ReaderStyle.maximumCharactersPerLine) < 1e-9)
+        }
+    }
+
+    @Test("A larger reading size gets a wider column, not a narrower one")
+    func columnGrowsWithText() {
+        let small = ReaderStyle(fontSize: 14).maximumColumnWidth
+        let large = ReaderStyle(fontSize: 48).maximumColumnWidth
+        #expect(large > small)
+        // And the cap stays inside the range that is comfortable for CJK.
+        #expect((30.0 ... 40.0).contains(ReaderStyle.maximumCharactersPerLine))
+    }
+
     @Test("The ruby band is tall enough for the glyphs it holds")
     func rubyReservationExceedsRubyFontSize() {
         // Pinyin carries diacritics above and descenders below, so a

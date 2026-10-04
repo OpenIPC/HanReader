@@ -95,6 +95,10 @@ private struct LibraryAndReader: View {
     @State private var importer: TextImporter
     @State private var isFileImporterPresented = false
     @State private var duplicateNotice = false
+    /// Restoring happens once per launch, not on every reload. A reload
+    /// follows every import and delete, and re-selecting there would fight
+    /// whatever the reader had just chosen.
+    @State private var hasRestoredLastText = false
 
     /// Whichever failure is outstanding.
     ///
@@ -153,7 +157,18 @@ private struct LibraryAndReader: View {
                 )
             }
         }
-        .task { await library.load() }
+        .task {
+            await library.load()
+            // The library already recorded which text was open; it just was
+            // not read back, so every launch asked the reader to choose a
+            // text again with one text in the list.
+            if !hasRestoredLastText {
+                hasRestoredLastText = true
+                if selection == nil {
+                    selection = library.mostRecentlyOpened?.id
+                }
+            }
+        }
         // `.fileImporter` is identical on both platforms and handles the
         // security-scoped URL itself, which is why there is no `NSOpenPanel`
         // anywhere in this project and no platform branch here.
