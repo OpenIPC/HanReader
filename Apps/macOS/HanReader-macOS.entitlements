@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Sandbox is deliberately absent. HanReader reads user-chosen
+	     text and audio from arbitrary locations and imports 350 MB dictionary
+	     files, which is the normal shape of a directly-distributed Mac app.
+	     A sandboxed Mac App Store configuration would be a third config, not a
+	     constraint on this one. Import still goes through
+	     startAccessingSecurityScopedResource, since iOS requires it and one
+	     code path is better than two. -->
+</dict>
+</plist>

@@ -1,0 +1,14 @@
+// Copy to Local.xcconfig (gitignored) to override settings for your machine.
+// Base.xcconfig includes it optionally, so it is fine not to have one at all.
+//
+// Needed only to run on a physical iOS device. Simulator and macOS builds work
+// without any of this.
+
+// Your Apple Developer Team ID, from developer.apple.com or Xcode > Settings >
+// Accounts. A free Apple ID gives a Personal Team, which works for device
+// builds but expires after 7 days.
+// DEVELOPMENT_TEAM = ABCDE12345
+
+// Change this if two people need the app installed on the same device, or if
+// you do not have provisioning rights to org.openipc.
+// HANREADER_BUNDLE_ID_PREFIX = com.example

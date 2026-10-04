@@ -30,5 +30,11 @@ it needs to read like release notes rather than a commit log.
   bans on AppKit outside the platform shim, `NaturalLanguage` outside the
   tokenization module, database imports outside persistence, and hard-coded
   design values in views.
+- macOS and iOS application targets, generated from `project.yml` by XcodeGen
+  and sharing one SwiftUI scene. `make run` and `make run-ios` build and launch
+  them; the window is a placeholder until the reader lands in M5.
+- Layered `.xcconfig` build settings with an optional per-machine
+  `Local.xcconfig`, so the repository contains no team identifier and forks
+  build without one.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main

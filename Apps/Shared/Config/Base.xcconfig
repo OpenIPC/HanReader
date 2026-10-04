@@ -1,0 +1,36 @@
+// Shared build settings for both application targets.
+//
+// Values live here rather than in project.yml so they are visible in Xcode's
+// build-settings inspector and can be overridden per machine.
+
+// Keep HANREADER_VERSION in step with HanReaderCore.version. A CI check asserts
+// the two agree, because a version that disagrees with the one recorded in
+// generated dictionary containers makes a database untraceable to its build.
+HANREADER_VERSION = 0.1.0
+HANREADER_BUILD = 1
+
+// Overridable so two contributors can install on the same test device without
+// a provisioning collision.
+HANREADER_BUNDLE_ID_PREFIX = org.openipc
+HANREADER_BUNDLE_ID = $(HANREADER_BUNDLE_ID_PREFIX).hanreader
+
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY = YES
+
+ARCHS = $(ARCHS_STANDARD)
+ONLY_ACTIVE_ARCH = YES
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+DEAD_CODE_STRIPPING = YES
+CLANG_ENABLE_OBJC_ARC = YES
+
+// Silences a deprecation warning about traditional headermaps.
+ALWAYS_SEARCH_USER_PATHS = NO
+
+// Deliberately NOT setting DEVELOPMENT_TEAM. If it is set, Xcode's automatic
+// signing cannot fall back to a contributor's Personal Team and every fork
+// fails its first build. CI injects it on the xcodebuild command line.
+
+// Optional per-machine overrides: DEVELOPMENT_TEAM, HANREADER_BUNDLE_ID_PREFIX.
+// The `?` makes the include optional -- see Local.xcconfig.example.
+#include? "Local.xcconfig"

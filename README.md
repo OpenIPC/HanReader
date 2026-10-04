@@ -8,9 +8,10 @@ and iOS.
 ![Platforms](https://img.shields.io/badge/platforms-macOS%2014%2B%20%7C%20iOS%2017%2B-lightgrey)
 
 > **Status: early development.** HanReader is being rebuilt from a working
-> private prototype into something publishable. The repository is not yet a
-> runnable app — see [Roadmap](#roadmap) for what is landing and in what order.
-> There are no downloadable builds yet; see
+> private prototype into something publishable. `make run` builds and launches
+> on macOS and iOS today, but the window is still a placeholder — the reader
+> itself arrives in milestone M5. See [Roadmap](#roadmap) for the order of
+> work. There are no downloadable builds yet; see
 > [Building from source](#building-from-source).
 
 ---
@@ -98,7 +99,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 ## Roadmap
 
 - [x] **M0** — license boundary and repository scaffolding
-- [ ] **M1** — package skeleton, toolchain bootstrap, CI green on both platforms
+- [x] **M1** — package skeleton, toolchain bootstrap, CI green on both platforms
 - [ ] **M2** — pinyin engine, CC-CEDICT parser, database and migrations
 - [ ] **M3** — dictionary pipeline and zero-setup first launch
 - [ ] **M4** — word segmentation and the line-breaking core

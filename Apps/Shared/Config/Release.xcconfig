@@ -1,0 +1,11 @@
+#include "Base.xcconfig"
+
+SWIFT_OPTIMIZATION_LEVEL = -O
+SWIFT_COMPILATION_MODE = wholemodule
+ENABLE_TESTABILITY = NO
+ONLY_ACTIVE_ARCH = NO
+VALIDATE_PRODUCT = YES
+
+// Only for Release. Debug signs ad-hoc, with which Xcode disables the
+// hardened runtime anyway and notes it on every single build.
+ENABLE_HARDENED_RUNTIME = YES

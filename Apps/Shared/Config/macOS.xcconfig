@@ -1,0 +1,14 @@
+// macOS-only settings.
+
+MACOSX_DEPLOYMENT_TARGET = 14.0
+INFOPLIST_FILE = Apps/macOS/Info.plist
+CODE_SIGN_ENTITLEMENTS = Apps/macOS/HanReader-macOS.entitlements
+
+// A macOS 14 floor includes Intel Macs, so build universal for Release.
+ARCHS[config=Release][sdk=macosx*] = x86_64 arm64
+
+// Ad-hoc signing is genuinely sufficient for local development here: the app
+// uses no Keychain items, no App Groups and no persisted TCC grants, which are
+// the things a per-build ad-hoc identity breaks.
+CODE_SIGN_IDENTITY = -
+CODE_SIGN_STYLE = Manual
