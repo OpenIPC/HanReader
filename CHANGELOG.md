@@ -82,6 +82,8 @@ it needs to read like release notes rather than a commit log.
 - [Docs/fidelity.md](Docs/fidelity.md), which states behaviourally what
   "faithful to the prototype" means across two platforms, and names the test
   that enforces each part.
+- Names read as names: 林冲 is `Lín Chōng` rather than `LínChōng`, and
+  中国人民解放军 is `Zhōngguó Rénmín Jiěfàngjūn`.
 - **The reader itself.** Import a Chinese `.txt`, tap a word to see its
   pinyin above the text and its definition below, and hear it spoken. The
   library remembers where you were in each text and which words you had
