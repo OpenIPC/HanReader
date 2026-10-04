@@ -228,6 +228,16 @@ jobs:
       - name: Toolchain
         run: swift --version
 
+      - name: Install python3 for the manifest check
+        # The official Swift images are slim and ship no Python. The manifest
+        # check parses `swift package dump-package`, which is far more legible
+        # in Python than in shell, so spend ~15s on the package rather than
+        # hand-rolling JSON parsing in bash.
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3
+          python3 --version
+
       - name: HanReaderCore imports only Foundation
         run: |
           set -euo pipefail
