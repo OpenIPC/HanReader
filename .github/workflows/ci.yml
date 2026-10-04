@@ -177,7 +177,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .tools
           # bootstrap.sh is in the key as well as tools.lock: it decides how
@@ -242,7 +242,7 @@ jobs:
           swift --version 2>&1 | head -2 > .toolchain-id
           cat .toolchain-id
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .build
           # Keyed on the compiler identity as well as the dependency graph.
@@ -424,7 +424,7 @@ jobs:
           fi
           echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .tools
           # bootstrap.sh is in the key as well as tools.lock: it decides how
@@ -521,7 +521,7 @@ jobs:
       - name: Licence statements all agree
         run: ./Scripts/check-dictionary-licence.sh
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .build
           key: dict-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
