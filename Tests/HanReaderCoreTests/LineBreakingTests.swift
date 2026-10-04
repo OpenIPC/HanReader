@@ -241,3 +241,85 @@ struct TokenMeasuringTests {
         #expect(lines.flatMap { Array($0.range) } == Array(0 ..< items.count))
     }
 }
+
+@Suite("Line-breaking regressions")
+struct LineBreakingRegressionTests {
+    /// An opener alone on a line is exactly what the rule exists to prevent,
+    /// so when there is nowhere legal to break the line must overflow rather
+    /// than break illegally.
+    @Test("A narrow line does not strand an opening bracket")
+    func narrowLineKeepsOpenerWithItsText() {
+        let specs = [Spec(advance: 10, opener: true), Spec(advance: 10)]
+        let lines = layOutLines(items(specs), width: 10)
+        #expect(lines.map(\.range) == [0 ..< 2], "（ was left alone on its line")
+    }
+
+    /// Retreating for glue found a legal-looking boundary without checking
+    /// that the resulting line could legally *end* there.
+    @Test("Retreating for glue does not strand an opener")
+    func glueRetreatRespectsOpeners() {
+        // 中 （ 甲 。 at ten each, width thirty.
+        let specs = [
+            Spec(advance: 10),
+            Spec(advance: 10, opener: true),
+            Spec(advance: 10),
+            Spec(advance: 10, glue: true),
+        ]
+        let lines = layOutLines(items(specs), width: 30)
+        // Must not be [0..<2, 2..<4]: that ends line one on the opener.
+        #expect(lines.map(\.range) == [0 ..< 1, 1 ..< 4])
+    }
+
+    /// The degenerate-width tests only covered unglued items, so this path
+    /// was unexercised.
+    @Test(
+        "Glue is honoured even at a degenerate width",
+        .timeLimit(.minutes(1)),
+        arguments: [0.0, -5.0],
+    )
+    func degenerateWidthWithGlue(width: Double) {
+        let specs = [Spec(advance: 10), Spec(advance: 10, glue: true)]
+        let lines = layOutLines(items(specs), width: width)
+        // One line, because the second item may not begin one. Splitting here
+        // would honour the width at the cost of the typography rule, which is
+        // the wrong trade.
+        #expect(lines.map(\.range) == [0 ..< 2])
+        #expect(lines.flatMap { Array($0.range) } == [0, 1])
+    }
+
+    /// A long run of punctuation made the retreat helper rescan a growing
+    /// prefix on every overflow.
+    @Test("A long glued run lays out in reasonable time", .timeLimit(.minutes(1)))
+    func longGluedRunIsNotQuadratic() {
+        let specs = [Spec(advance: 10)] + (0 ..< 4000).map { _ in Spec(advance: 10, glue: true) }
+        let lines = layOutLines(items(specs), width: 25)
+        #expect(lines.count == 1)
+        #expect(lines[0].range.count == 4001)
+    }
+
+    @Test("A long run of openers lays out in reasonable time", .timeLimit(.minutes(1)))
+    func longOpenerRunIsNotQuadratic() {
+        let specs = (0 ..< 4000).map { _ in Spec(advance: 10, opener: true) } + [Spec(advance: 10)]
+        let lines = layOutLines(items(specs), width: 25)
+        #expect(lines.flatMap { Array($0.range) } == Array(0 ..< 4001))
+    }
+
+    /// `lineSpacing` was accepted and immediately discarded, so every value
+    /// produced the same result and no caller could position anything.
+    @Test("Line spacing positions the lines")
+    func lineSpacingIsUsed() {
+        let lines = layOutLines(plain([10, 10, 10, 10]), width: 25, lineSpacing: 4)
+        #expect(lines.count == 2)
+        #expect(lines[0].y == 0)
+        // First line is 10 tall, plus 4 of spacing.
+        #expect(lines[1].y == 14)
+    }
+
+    @Test("Total height accounts for spacing between lines")
+    func totalHeight() {
+        let lines = layOutLines(plain([10, 10, 10, 10]), width: 25, lineSpacing: 4)
+        // Two 10-tall lines with one 4-unit gap.
+        #expect(lines.totalHeight == 24)
+        #expect(layOutLines([], width: 10, lineSpacing: 4).totalHeight == 0)
+    }
+}
