@@ -8,10 +8,11 @@ and iOS.
 ![Platforms](https://img.shields.io/badge/platforms-macOS%2014%2B%20%7C%20iOS%2017%2B-lightgrey)
 
 > **Status: early development.** HanReader is being rebuilt from a working
-> private prototype into something publishable. `make run` builds and launches
-> on macOS and iOS today, but the window is still a placeholder — the reader
-> itself arrives in milestone M5. See [Roadmap](#roadmap) for the order of
-> work. There are no downloadable builds yet; see
+> private prototype into something publishable. **The reader works**: `make
+> run` builds and launches on macOS and iOS, and you can import a Chinese
+> `.txt`, tap words for pinyin and definitions, and hear them spoken. Audio
+> playback, the BKRS dictionary importer and the iOS polish are still to come
+> — see [Roadmap](#roadmap). There are no downloadable builds yet; see
 > [Building from source](#building-from-source).
 
 ---
@@ -27,7 +28,7 @@ separate window:
   it never jumps as you move from word to word.
 - **Hear it.** Tapping a word speaks it.
 - **Follow along with audio.** Attach a narration file to a text and scrub it at
-  0.75× to 1.5×.
+  0.75× to 1.5×. *(Arrives in M7.)*
 - **Two reading modes** — visibly word-segmented, or continuous as it would
   actually be printed.
 - **It remembers.** Your position and the words you have revealed survive
@@ -103,7 +104,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M2** — pinyin engine, CC-CEDICT parser, database and migrations
 - [x] **M3** — dictionary pipeline and zero-setup first launch
 - [x] **M4** — word segmentation and the line-breaking core
-- [ ] **M5** — **the macOS reader: first usable version**
+- [x] **M5** — **the macOS reader: first usable version**
 - [ ] **M6** — BKRS DSL import
 - [ ] **M7** — audio playback
 - [ ] **M8** — iOS and iPadOS
