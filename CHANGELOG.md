@@ -44,5 +44,11 @@ it needs to read like release notes rather than a commit log.
 - CC-CEDICT parser and the dictionary model, with senses, cross-references
   extracted from gloss text, and entries keyed by headword *and* reading so
   that words with several pronunciations keep all of them.
+- Library database on GRDB, with versioned migrations from the first release.
+  Texts deduplicate on content rather than title, reading position is stored as
+  a character offset so it survives a font-size change, revealed words are
+  relational rather than a packed string, audio paths are relative so they
+  survive an iOS restore, and deleting a text actually removes everything
+  attached to it.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main
