@@ -1,6 +1,6 @@
 // HanReader — MIT licensed. See LICENSE.
 
-public import Foundation
+import Foundation
 
 /// How serious a log message is.
 public enum LogLevel: Int, Sendable, Hashable, Comparable, CaseIterable {
