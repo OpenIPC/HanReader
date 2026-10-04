@@ -237,48 +237,78 @@ public enum DSLLexer {
     }
 
     /// Interprets the inside of a `[...]`.
+    ///
+    /// Strict on purpose, in all three directions a looser reading would be
+    /// tempting. A sense closes with a bare `[/m]` and nothing else; a level
+    /// is an ASCII digit and nothing else; and only `[c]` carries an
+    /// argument. Anything outside that is not quietly reinterpreted — it is
+    /// kept as text and reported, which is the same rule the lexer applies
+    /// to a tag it has never heard of.
+    ///
+    /// The alternative is guessing, and a guess here is invisible: `[b bold]`
+    /// read as bold-with-an-argument produces markup that looks right and
+    /// has silently dropped whatever `bold` was meant to say.
     private static func parse(_ body: String) -> Parsed {
         guard !body.isEmpty else { return .unknown }
 
         if body.hasPrefix("/") {
-            let name = String(body.dropFirst())
-            guard let kind = kind(forName: name) else { return .unknown }
+            // `[/m1]` is not a close. A sense ends with `[/m]`, and treating
+            // a levelled close as valid would accept markup this format does
+            // not produce while hiding it from the diagnostics.
+            guard let kind = closingKind(forName: String(body.dropFirst())) else {
+                return .unknown
+            }
             return .close(kind)
         }
 
-        // `[c brown]` — the name is everything up to the first space, and
-        // the rest is the argument. Only `[c]` carries one in this data, but
-        // splitting generally costs nothing and avoids a special case.
+        // `[c brown]` — the name runs to the first space, the rest is the
+        // argument.
         let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
         let name = String(parts[0])
         let argument = parts.count > 1 ? String(parts[1]) : nil
 
         if let level = senseLevel(forName: name) {
-            return .open(DSLTag(kind: .sense, level: level, argument: argument))
+            // `[m1 extra]` means nothing in this format.
+            guard argument == nil else { return .unknown }
+            return .open(DSLTag(kind: .sense, level: level, argument: nil))
         }
-        guard let kind = kind(forName: name), kind != .sense else { return .unknown }
+
+        guard let kind = openingKind(forName: name) else { return .unknown }
+        // Colour is the only tag that takes an argument. Accepting one
+        // elsewhere would turn an unparsed fragment into valid-looking
+        // markup.
+        guard argument == nil || kind == .colour else { return .unknown }
         return .open(DSLTag(kind: kind, level: nil, argument: argument))
     }
 
-    /// `m3` → 3. Nil for anything that is not `m` followed by one digit.
+    /// `m3` → 3.
+    ///
+    /// ASCII digits only. `Character.wholeNumberValue` also answers for
+    /// `٥` and `Ⅻ`, so a bare `wholeNumberValue` check turns `[m٥]` into a
+    /// sense at level five — markup invented from a character this format
+    /// never uses.
+    ///
+    /// The range is the format's 1–9, not the 1–4 that happen to occur in
+    /// BKRS. The lexer implements DSL; what a particular dictionary uses is
+    /// the card builder's business.
     private static func senseLevel(forName name: String) -> Int? {
         guard name.count == 2, name.hasPrefix("m"),
-              let digit = name.last, let level = digit.wholeNumberValue,
-              level > 0
+              let digit = name.last, digit.isASCII, digit.isNumber,
+              let level = digit.wholeNumberValue, level > 0
         else { return nil }
         return level
     }
 
-    private static func kind(forName name: String) -> DSLTagKind? {
-        // A bare `m` is only ever a close: `[/m]` ends whichever sense is
-        // open, which is why a close carries no level.
-        if name == "m" {
-            return .sense
-        }
-        if senseLevel(forName: name) != nil {
-            return .sense
-        }
+    /// The kind a name opens, or nil if it opens nothing.
+    private static func openingKind(forName name: String) -> DSLTagKind? {
+        // A bare `m` only ever closes; there is no level to give it.
+        guard name != "m" else { return nil }
         return DSLTagKind.allCases.first { $0.openingName == name }
+    }
+
+    /// The kind a name closes, or nil if it closes nothing.
+    private static func closingKind(forName name: String) -> DSLTagKind? {
+        DSLTagKind.allCases.first { $0.openingName == name }
     }
 
     /// The next `]` that is not itself escaped.

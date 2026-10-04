@@ -112,6 +112,49 @@ struct DSLLexerTests {
         #expect(lex("[c]") == [.open(DSLTag(kind: .colour, argument: nil))])
     }
 
+    // MARK: - Strictness
+
+    /// A sense ends with a bare `[/m]`. Accepting `[/m1]` would admit markup
+    /// this format does not produce while hiding it from the diagnostics.
+    @Test("A levelled close is not a close")
+    func levelledCloseIsRejected() {
+        #expect(visibleText("[/m1]текст") == "[/m1]текст")
+        #expect(diagnostics("[/m1]").map(\.kind) == [.unknownTag("/m1")])
+    }
+
+    /// `Character.wholeNumberValue` answers for `٥` and `Ⅻ` too, so a bare
+    /// check turns `[m٥]` into a sense at level five — markup invented from
+    /// a character the format never uses.
+    @Test("A sense level must be an ASCII digit", arguments: ["[m٥]", "[mⅫ]", "[m一]"])
+    func nonAsciiLevelsRejected(markup: String) {
+        #expect(visibleText(markup) == markup)
+        #expect(diagnostics(markup).count == 1)
+    }
+
+    /// The format's range, not the 1–4 that BKRS happens to use. The lexer
+    /// implements DSL; which levels a dictionary uses is the builder's
+    /// business.
+    @Test("Levels 1 to 9 open a sense", arguments: Array(1 ... 9))
+    func asciiLevelsAccepted(level: Int) {
+        #expect(lex("[m\(level)]") == [.open(DSLTag(kind: .sense, level: level))])
+    }
+
+    /// Colour is the only tag that takes an argument. Accepting one
+    /// elsewhere turns an unparsed fragment into valid-looking markup and
+    /// silently drops whatever it said.
+    @Test("An argument on a tag that takes none is reported", arguments: [
+        "[b extra]", "[i extra]", "[ex extra]", "[m1 extra]", "[ref extra]",
+    ])
+    func unexpectedArgumentRejected(markup: String) {
+        #expect(visibleText(markup) == markup)
+        #expect(diagnostics(markup).count == 1)
+    }
+
+    @Test("Colour still takes its argument")
+    func colourKeepsArgument() {
+        #expect(lex("[c brown]") == [.open(DSLTag(kind: .colour, argument: "brown"))])
+    }
+
     // MARK: - Nothing is lost
 
     /// A dictionary that silently drops what it does not understand is worse
