@@ -25,18 +25,39 @@ public struct LineItem: Hashable, Sendable {
     /// or `“`, because the mark would be orphaned from what it opens.
     public let canEndLine: Bool
 
+    /// Whether this item takes up no space when it begins a line.
+    ///
+    /// True for whitespace that is in the source text. A space is a separator
+    /// between the things on either side of it, so once a line break has come
+    /// between them it has nothing left to separate — and drawing its advance
+    /// anyway indents the line by a space for no reason the reader can see.
+    /// Every text engine collapses a line's leading whitespace; this is that
+    /// rule, and nothing more.
+    ///
+    /// Note this is *not* the same as forbidding a break before whitespace.
+    /// Forbidding it would push the preceding word down onto the next line to
+    /// keep the space company, which trades a stray indent for a short line.
+    public let collapsesAtLineStart: Bool
+
     public init(
         advance: Double,
         height: Double,
         leadingSpace: Double = 0,
         glueToPrevious: Bool = false,
         canEndLine: Bool = true,
+        collapsesAtLineStart: Bool = false,
     ) {
         self.advance = advance
         self.height = height
         self.leadingSpace = leadingSpace
         self.glueToPrevious = glueToPrevious
         self.canEndLine = canEndLine
+        self.collapsesAtLineStart = collapsesAtLineStart
+    }
+
+    /// The width this item occupies at a given position on its line.
+    func advance(atLineStart: Bool) -> Double {
+        atLineStart && collapsesAtLineStart ? 0 : advance
     }
 }
 
@@ -163,10 +184,11 @@ private func lineEnd(
     while index < items.count {
         let item = items[index]
         let gap = index == start ? 0 : item.leadingSpace
-        if cursor + gap + item.advance > width, index > start {
+        let advance = item.advance(atLineStart: index == start)
+        if cursor + gap + advance > width, index > start {
             break
         }
-        cursor += gap + item.advance
+        cursor += gap + advance
         index += 1
     }
 
@@ -215,7 +237,11 @@ private func buildLine(
             cursor += item.leadingSpace
         }
         offsets.append(cursor)
-        cursor += item.advance
+        // A collapsed leading space is placed at the line's origin and
+        // contributes nothing, so the first real item starts at the margin.
+        // It still gets an offset of its own, because every item is placed
+        // exactly once and a space draws nothing to overlap with.
+        cursor += item.advance(atLineStart: index == start)
         height = max(height, item.height)
     }
     return LineRun(
@@ -288,6 +314,7 @@ extension [Token] {
                 leadingSpace: measurer.leadingSpace(before: token.text, kind: token.kind),
                 glueToPrevious: LineBreakRules.glueToPrevious(token.text),
                 canEndLine: LineBreakRules.canEndLine(token.text),
+                collapsesAtLineStart: token.kind == .whitespace,
             )
         }
     }

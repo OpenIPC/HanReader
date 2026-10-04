@@ -11,27 +11,12 @@ import SwiftUI
 /// the body in one place is what makes "two app targets" a packaging detail
 /// rather than two codebases.
 ///
-/// - Note: This is scaffolding. The reader arrives in milestone M5.
+/// The view itself lives in `HanReaderUI` so that both targets, the previews
+/// and the test suite see exactly the same code. This file holds no reader
+/// logic and is not expected to grow any.
 struct HanReaderRootScene: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "text.book.closed")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            Text("HanReader")
-                .font(.largeTitle.weight(.light))
-            Text(verbatim: "汉语阅读器")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-            Text("The reader arrives in milestone M5.")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-            Text(verbatim: "HanReaderUI \(HanReaderUI.linkedVersions.count) modules linked")
-                .font(.caption.monospaced())
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+        HanReaderRootView()
     }
 }
 
