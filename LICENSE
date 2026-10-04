@@ -1,14 +1,3 @@
-The MIT License below applies to the HanReader source code: everything in this
-repository EXCEPT the contents of the Dictionaries/ directory, which are
-third-party data distributed under their own licenses. See
-Dictionaries/*/LICENSE and THIRD-PARTY-NOTICES.md for those terms.
-
-Note also that a dictionary database generated from CC-CEDICT data is an
-adaptation of CC BY-SA 4.0 licensed material, and is therefore itself licensed
-CC BY-SA 4.0 -- not MIT.
-
-----------------------------------------------------------------------
-
 MIT License
 
 Copyright (c) 2026 OpenIPC and HanReader contributors

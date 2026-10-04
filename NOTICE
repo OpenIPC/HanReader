@@ -1,6 +1,30 @@
 HanReader
 Copyright (c) 2026 OpenIPC and HanReader contributors
 
+================================================================================
+SCOPE OF THE MIT LICENSE
+================================================================================
+
+The MIT License in the LICENSE file applies to the HanReader source code:
+everything in this repository EXCEPT the contents of the Dictionaries/
+directory, which is third-party data distributed under its own license.
+
+  Source code (Sources/, Apps/, Tests/, Scripts/, Docs/)  ->  MIT
+  Dictionaries/cc-cedict/                                 ->  CC BY-SA 4.0
+
+Note further that a dictionary database generated from CC-CEDICT data is an
+Adapted Work under CC BY-SA 4.0, and is therefore itself licensed CC BY-SA 4.0
+-- not MIT. This matters the moment anyone publishes a prebuilt dictionary
+database as a release artifact, or distributes a built application containing
+one. The two licenses coexist; they do not merge.
+
+(This statement lives here rather than in LICENSE because automated license
+detection requires LICENSE to contain only the license text.)
+
+================================================================================
+THIRD-PARTY MATERIAL
+================================================================================
+
 This product includes third-party material. See THIRD-PARTY-NOTICES.md for the
 complete list of components, their licenses, and the attribution statements
 those licenses require.
@@ -8,3 +32,6 @@ those licenses require.
 In particular, HanReader bundles CC-CEDICT, a Chinese-English dictionary
 licensed under Creative Commons Attribution-ShareAlike 4.0 International.
 See Dictionaries/cc-cedict/ for the data, its license, and its attribution.
+
+HanReader does NOT bundle or redistribute the BKRS / 大БКРС Chinese-Russian
+dictionary. It ships an importer only; users supply their own data.

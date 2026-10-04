@@ -36,15 +36,28 @@ jobs:
           done
           exit $missing
 
-      - name: The MIT license still declares its scope
-        # The root LICENSE must keep saying that Dictionaries/ is excluded,
-        # or the CC BY-SA boundary silently disappears.
+      - name: The MIT/CC BY-SA scope boundary is still declared
+        # NOTICE must keep stating that Dictionaries/ is excluded from the MIT
+        # license, or the CC BY-SA boundary silently disappears. This lives in
+        # NOTICE rather than LICENSE because GitHub's license detection
+        # (licensee) only recognises MIT when LICENSE holds nothing but the
+        # license text -- a preamble there makes the repo report "Other".
         run: |
           set -euo pipefail
-          grep -q "EXCEPT the contents of the Dictionaries/ directory" LICENSE \
-            || { echo "::error file=LICENSE::the scope header excluding Dictionaries/ is gone"; exit 1; }
-          grep -q "CC BY-SA 4.0" LICENSE \
-            || { echo "::error file=LICENSE::the ShareAlike note on generated databases is gone"; exit 1; }
+          grep -q "EXCEPT the contents of the Dictionaries/" NOTICE \
+            || { echo "::error file=NOTICE::the scope statement excluding Dictionaries/ is gone"; exit 1; }
+          grep -q "CC BY-SA 4.0" NOTICE \
+            || { echo "::error file=NOTICE::the ShareAlike note on generated databases is gone"; exit 1; }
+
+      - name: LICENSE contains only the license text, so MIT stays detectable
+        run: |
+          set -euo pipefail
+          head -1 LICENSE | grep -qx "MIT License" \
+            || { echo "::error file=LICENSE::must begin with 'MIT License' -- any preamble breaks license detection"; exit 1; }
+          if grep -qiE "dictionaries/|CC BY-SA|third-party" LICENSE; then
+            echo "::error file=LICENSE::explanatory text found. Put scope notes in NOTICE; licensee reports 'Other' otherwise."
+            exit 1
+          fi
 
       - name: CC-CEDICT attribution carries its required statements
         # CC BY-SA 4.0 requires creator, source, license and a statement of

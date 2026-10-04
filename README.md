@@ -125,7 +125,11 @@ HanReader imports dictionaries; it does not redistribute them.
 **Bundled dictionary data: CC BY-SA 4.0.** CC-CEDICT lives in
 [`Dictionaries/cc-cedict/`](Dictionaries/cc-cedict/) under its own license, and
 a dictionary database generated from it is an adaptation that carries CC BY-SA
-too — not MIT. See [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+too — not MIT.
+
+[`NOTICE`](NOTICE) states exactly where that boundary falls, and
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md) lists every component with
+its attribution.
 
 ## Acknowledgements
 
