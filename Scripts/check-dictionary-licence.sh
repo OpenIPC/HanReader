@@ -43,32 +43,41 @@ printf '  data declares:  %s (version %s)\n' "$declared" "$version"
 
 # 2. SOURCE.json.
 recorded="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['license'])" "$RECORD")"
-[ "$recorded" = "$declared" ] \
-    || fail "SOURCE.json records '$recorded' but the data declares '$declared'"
+if [ "$recorded" != "$declared" ]; then
+    fail "SOURCE.json records '$recorded' but the data declares '$declared'"
+fi
 printf '  SOURCE.json:    agrees\n'
 
 # 3. The attribution quoted for end users.
-grep -qF "$version" "$README" \
-    || fail "the attribution in README.md does not mention version $version" \
-            "${README#"$REPO_ROOT"/}"
-# And must not still claim a different version.
-while read -r other; do
-    [ "$other" = "$version" ] && continue
-    grep -qE "Attribution-ShareAlike \*{0,2}$other" "$README" \
-        && fail "README.md still quotes version $other; the data declares $version" \
-                "${README#"$REPO_ROOT"/}"
-done <<< "$(printf '1.0\n2.0\n2.5\n3.0\n4.0\n')"
+if ! grep -qF "$version" "$README"; then
+    fail "the attribution in README.md does not mention version $version" \
+         "${README#"$REPO_ROOT"/}"
+fi
+# And must not still claim a different version. Written with explicit `if`
+# rather than `grep ... && fail`: under `set -e` a failing && list is the last
+# command in the loop body, and bash versions disagree about whether that
+# aborts the script.
+for other in 1.0 2.0 2.5 3.0 4.0; do
+    if [ "$other" != "$version" ]; then
+        if grep -qE "Attribution-ShareAlike \*{0,2}$other" "$README"; then
+            fail "README.md still quotes version $other; the data declares $version" \
+                 "${README#"$REPO_ROOT"/}"
+        fi
+    fi
+done
 printf '  README.md:      agrees\n'
 
 # 4. The committed legalcode must be the licence the data is actually under.
-grep -qE "Attribution-ShareAlike $version" "$LEGALCODE" \
-    || fail "the committed legalcode is not Attribution-ShareAlike $version" \
-            "${LEGALCODE#"$REPO_ROOT"/}"
+if ! grep -qE "Attribution-ShareAlike $version" "$LEGALCODE"; then
+    fail "the committed legalcode is not Attribution-ShareAlike $version" \
+         "${LEGALCODE#"$REPO_ROOT"/}"
+fi
 printf '  LICENSE:        agrees\n'
 
 # The required attribution fields, which CC BY-SA obliges us to carry.
 for field in "Creator:" "Source:" "License:" "Changes made:"; do
-    grep -qF "$field" "$README" \
-        || fail "the attribution is missing the '$field' field" "${README#"$REPO_ROOT"/}"
+    if ! grep -qF "$field" "$README"; then
+        fail "the attribution is missing the '$field' field" "${README#"$REPO_ROOT"/}"
+    fi
 done
 printf '  attribution:    complete\n'

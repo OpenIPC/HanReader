@@ -49,8 +49,14 @@ jobs:
           set -euo pipefail
           grep -q "EXCEPT the contents of the Dictionaries/" NOTICE \
             || { echo "::error file=NOTICE::the scope statement excluding Dictionaries/ is gone"; exit 1; }
-          grep -q "CC BY-SA 4.0" NOTICE \
+          # Deliberately version-agnostic. Pinning "4.0" here is what broke
+          # when the snapshot moved to a 3.0 source: the version belongs to the
+          # data, and Scripts/check-dictionary-licence.sh verifies it against
+          # the data's own header. This check only asserts the note exists.
+          grep -q "CC BY-SA" NOTICE \
             || { echo "::error file=NOTICE::the ShareAlike note on generated databases is gone"; exit 1; }
+          grep -q "Adapted Work" NOTICE \
+            || { echo "::error file=NOTICE::the Adapted Work statement is gone"; exit 1; }
 
       - name: LICENSE contains only the license text, so MIT stays detectable
         run: |

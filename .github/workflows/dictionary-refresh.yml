@@ -5,8 +5,8 @@ name: Dictionary refresh
 # checks monthly and opens an issue when upstream has moved.
 #
 # It deliberately does NOT commit anything. Refreshing the snapshot can change
-# the declared licence — the currently pinned mirror is CC BY-SA 3.0 while
-# upstream is 4.0 — and that requires updating the attribution, the committed
+# the declared licence — the pinned snapshot and current upstream are not
+# necessarily the same version — and that requires updating the attribution, the committed
 # legalcode and several documents to match. That is a judgement a person
 # should make, not something a scheduled job should push.
 
