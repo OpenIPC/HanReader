@@ -44,6 +44,11 @@ it needs to read like release notes rather than a commit log.
 - CC-CEDICT parser and the dictionary model, with senses, cross-references
   extracted from gloss text, and entries keyed by headword *and* reading so
   that words with several pronunciations keep all of them.
+- Word segmentation: paragraph and script-run handling, a deterministic
+  maximum-matching segmenter over the dictionary's own lexicon, a wrapper
+  around Apple's tokenizer, and a repair pass that rejoins compounds the
+  tokenizer splits. Tokens now carry their position in the source, which is
+  what makes restoring a reading position possible at all.
 - The bundled dictionary itself: a pinned CC-CEDICT snapshot, compiled during
   the build so a clean clone launches with a working dictionary and no setup.
   `Scripts/update-cedict.sh` refreshes the pin, and CI fails if the committed
