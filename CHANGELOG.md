@@ -44,6 +44,10 @@ it needs to read like release notes rather than a commit log.
 - CC-CEDICT parser and the dictionary model, with senses, cross-references
   extracted from gloss text, and entries keyed by headword *and* reading so
   that words with several pronunciations keep all of them.
+- Line breaking as a pure function over measured items, with the CJK rule
+  that matters most: a line never begins with a full stop or closing bracket,
+  and never ends with an opening one. Being pure arithmetic rather than view
+  code is what lets it be tested exhaustively without rendering anything.
 - Word segmentation: paragraph and script-run handling, a deterministic
   maximum-matching segmenter over the dictionary's own lexicon, a wrapper
   around Apple's tokenizer, and a repair pass that rejoins compounds the
