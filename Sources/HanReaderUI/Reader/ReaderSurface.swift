@@ -48,10 +48,15 @@ struct ReaderSurface: View {
             .scrollTargetLayout()
             .frame(maxWidth: ReaderMetrics.readingColumnMaxWidth, alignment: .leading)
             .padding(.horizontal, ReaderMetrics.readingColumnPadding)
-            // Room above the first line for a revealed reading on it, and
-            // below the last for the detail surface not to cover it.
+            // Room above the first line for a revealed reading on it.
+            //
+            // Nothing is reserved below for the detail panel: whoever
+            // presents it does so with `.safeAreaInset`, which already insets
+            // this scroll view by the panel's real height. Adding the panel's
+            // nominal height here as well reserved it twice, and the literal
+            // did not scale with Dynamic Type the way the panel itself does.
             .padding(.top, style.rubyReservation)
-            .padding(.bottom, ReaderMetrics.detailPanelHeight)
+            .padding(.bottom, style.paragraphGap)
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .scrollPosition(id: $topBlock, anchor: .top)
