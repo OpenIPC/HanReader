@@ -14,9 +14,10 @@ permissions:
   contents: read
 
 # The application-build matrix arrives with the app targets later in M1, and
-# the dictionary job in M3. `lint` gates the expensive jobs, `spm-test` is the
-# fast lane where most of the suite will live, and `architecture` is what
-# actually enforces the module boundaries -- see its comment.
+# the dictionary job in M3. All jobs run in parallel for complete feedback on
+# each push: `spm-test` is the fast lane where most of the suite will live, and
+# `architecture` is what actually enforces the module boundaries -- see its
+# comment.
 
 jobs:
   hygiene:
@@ -145,9 +146,15 @@ jobs:
           PY
 
   lint:
-    # Cheap and fast, so it gates the expensive jobs. Uses the pinned tooling
-    # from Scripts/tools.lock rather than whatever the runner image preinstalls,
-    # so a contributor's local `make lint` and CI cannot disagree.
+    # Runs in parallel with the build jobs rather than gating them. Making the
+    # others `needs: lint` would save little -- this job is under a minute --
+    # and would cost a whole round trip: you would fix a formatting nit, push,
+    # and only then discover a failing test. Complete feedback per push is
+    # worth more here than the saved runner minutes.
+    #
+    # Uses the pinned tooling from Scripts/tools.lock rather than whatever the
+    # runner image preinstalls, so a contributor's local `make lint` and CI
+    # cannot disagree.
     name: Format and lint
     runs-on: macos-26
     steps:

@@ -100,7 +100,7 @@ custom_rules:
   no_appkit_outside_platform:
     name: "AppKit/UIKit outside HanReaderPlatform"
     included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport|HanReaderPlayback)/.*\\.swift"
-    regex: '^\s*(public |package |internal )?import +(AppKit|UIKit|Cocoa)\b'
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(AppKit|UIKit|Cocoa)\b'
     excluded_match_kinds: [comment, doccomment, string]
     message: "AppKit/UIKit belongs in HanReaderPlatform only."
     severity: error
@@ -108,25 +108,25 @@ custom_rules:
   no_naturallanguage_outside_tokenization:
     name: "NaturalLanguage outside HanReaderTokenization"
     included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderDictionaryImport|HanReaderPlayback|HanReaderPlatform)/.*\\.swift"
-    regex: '^\s*(public |package |internal )?import +NaturalLanguage\b'
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?NaturalLanguage\b'
     excluded_match_kinds: [comment, doccomment, string]
     message: "NaturalLanguage belongs in HanReaderTokenization; go through HanReaderCore.Tokenizing."
     severity: error
 
   no_database_outside_persistence:
     name: "Database access outside HanReaderPersistence"
-    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderTokenization|HanReaderPlayback|HanReaderPlatform)/.*\\.swift"
-    regex: '^\s*(public |package |internal )?import +(GRDB|SQLite3)\b'
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderTokenization|HanReaderPlayback|HanReaderPlatform|HanReaderDictionaryImport|hanreader-dictgen)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(GRDB|SQLite3)\b'
     excluded_match_kinds: [comment, doccomment, string]
-    message: "Database access goes through HanReaderPersistence."
+    message: "Database access goes through HanReaderPersistence, including from the modules built on top of it."
     severity: error
 
-  no_swiftui_in_core:
+  no_swiftui_outside_ui:
     name: "SwiftUI in a non-UI module"
-    included: ".*/Sources/(HanReaderCore|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport)/.*\\.swift"
-    regex: '^\s*(public |package |internal )?import +(SwiftUI|Combine)\b'
+    included: ".*/Sources/(HanReaderCore|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport|HanReaderPlayback)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(SwiftUI|Combine)\b'
     excluded_match_kinds: [comment, doccomment, string]
-    message: "SwiftUI belongs in HanReaderUI."
+    message: "SwiftUI belongs in HanReaderUI (or HanReaderPlatform for genuine platform bridging)."
     severity: error
 
   no_print:
@@ -158,9 +158,9 @@ custom_rules:
     severity: error
 
   no_raw_animation:
-    name: "Bare animation curve"
+    name: "Animation curve outside Design/"
     included: ".*/Sources/HanReaderUI/(?!Design/).*\\.swift"
-    regex: '\.(easeInOut|easeIn|easeOut|spring|linear)\(\s*duration:'
+    regex: '\.(easeInOut|easeIn|easeOut|linear|spring|bouncy|smooth|snappy|interpolatingSpring|timingCurve)\b'
     excluded_match_kinds: [comment, doccomment, string]
     message: "Route animations through Design/AnimationTokens so reduce-motion is honoured."
     severity: error

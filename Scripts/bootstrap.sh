@@ -28,8 +28,11 @@ die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 if [ "$(uname -s)" != "Darwin" ]; then
     # The pinned archives are macOS builds. The Linux CI job needs none of them,
-    # so this is a clean skip rather than a failure.
+    # so this is a clean skip rather than a failure. Still write the stamp, or
+    # make would re-run this script on every target.
     log "not macOS — skipping macOS-only developer tooling"
+    mkdir -p "$TOOLS_DIR"
+    printf 'skipped on %s\n' "$(uname -s)" > "$TOOLS_DIR/.bootstrap-stamp"
     exit 0
 fi
 
@@ -40,13 +43,28 @@ sha256() {
     fi
 }
 
+sha256_stdin() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d' ' -f1
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1
+    else die "neither shasum nor sha256sum is available"
+    fi
+}
+
 mkdir -p "$BIN_DIR" "$STAMP_DIR"
 
 # --- install one tool --------------------------------------------------------
 
 install_tool() {
     local name="$1" version="$2" layout="$3" url="$4" want_sha="$5"
-    local stamp="$STAMP_DIR/$name-$version"
+
+    # The stamp covers the entire locked record, not just name and version. Key
+    # it on the version alone and changing a URL, layout or checksum without a
+    # version bump would leave the old binary in place on every existing
+    # machine and skip verification altogether -- while CI, whose cache is
+    # keyed on the lock file's hash, would silently pick the change up.
+    local record_id
+    record_id="$(printf '%s\n' "$name $version $layout $url $want_sha" | sha256_stdin)"
+    local stamp="$STAMP_DIR/$name-$record_id"
 
     if [ -f "$stamp" ] && [ -x "$BIN_DIR/$name" ]; then
         log "$name $version already installed"
@@ -116,8 +134,14 @@ If you intentionally bumped the version, update the checksum in Scripts/tools.lo
         xattr -rd com.apple.quarantine "$TOOLS_DIR/$name" 2>/dev/null || true
     fi
 
-    "$BIN_DIR/$name" --version >/dev/null 2>&1 \
-        || warn "$name installed but did not respond to --version"
+    if ! "$BIN_DIR/$name" --version >/dev/null 2>&1; then
+        # Do not stamp a binary that cannot run: a stamped failure is never
+        # retried and surfaces later as a confusing make or CI error instead.
+        rm -f "$BIN_DIR/$name"
+        die "$name was downloaded and verified but does not run.
+  Its --version invocation failed, so the archive is likely for the wrong
+  architecture or the binary is damaged. Nothing was stamped; re-run to retry."
+    fi
 
     rm -f "$STAMP_DIR/$name-"*
     touch "$stamp"
@@ -174,5 +198,13 @@ if command -v xcrun >/dev/null 2>&1; then
            Not needed if you are only working on macOS."
     fi
 fi
+
+# Written last, and only on full success. The Makefile depends on this file
+# rather than on the tool binaries: a skipped install leaves a binary's mtime
+# untouched, so make would otherwise re-run bootstrap -- and its xcodebuild and
+# simctl probes -- on every single target once tools.lock was touched by a
+# checkout or rebase.
+mkdir -p "$STAMP_DIR"
+printf '%s\n' "$(sha256 "$LOCK_FILE")" > "$TOOLS_DIR/.bootstrap-stamp"
 
 printf 'Done. Tools are in .tools/bin (not on your PATH; the Makefile uses them directly).\n'

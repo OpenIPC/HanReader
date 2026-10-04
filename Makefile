@@ -17,6 +17,13 @@ XCODEGEN   := $(TOOLS)/xcodegen
 SWIFTLINT  := $(TOOLS)/swiftlint
 SWIFTFORMAT := $(TOOLS)/swiftformat
 
+# Single stamp written by bootstrap.sh on success. Targets depend on this rather
+# than on the tool binaries for two reasons: bootstrap deliberately leaves a
+# skipped tool's mtime alone, so binary-based prerequisites re-trigger it
+# forever once tools.lock is touched by a checkout; and one shared prerequisite
+# means `make -j` cannot run two concurrent bootstraps over the same files.
+TOOLS_STAMP := .tools/.bootstrap-stamp
+
 PROJECT    := HanReader.xcodeproj
 BUILD_DIR  := .build/xcode
 IOS_DEVICE ?= iPhone 17
@@ -40,8 +47,7 @@ help: ## Show this help
 bootstrap: ## Install pinned developer tooling into .tools/
 	@./Scripts/bootstrap.sh
 
-# A stamp file so the tools are fetched once rather than on every target.
-$(SWIFTLINT) $(SWIFTFORMAT) $(XCODEGEN): Scripts/tools.lock
+$(TOOLS_STAMP): Scripts/tools.lock
 	@./Scripts/bootstrap.sh
 
 doctor: ## Report toolchain and environment status
@@ -64,7 +70,7 @@ dict: ## Compile the bundled dictionary into Resources/Generated
 
 # ── Xcode project ────────────────────────────────────────────────────────────
 
-generate: $(XCODEGEN) ## Regenerate the Xcode project from project.yml
+generate: $(TOOLS_STAMP) ## Regenerate the Xcode project from project.yml
 	@# One shell block on purpose. Make runs each recipe line in its own shell,
 	@# so an early `exit 0` in a guard would end only that line and the
 	@# following commands would still run.
@@ -96,7 +102,11 @@ run: generate ## Build and launch the macOS app
 	@open "$(BUILD_DIR)/Build/Products/Debug/HanReader.app"
 
 run-ios: generate ## Build and launch the app in the iOS Simulator
-	@if ! xcrun simctl list runtimes 2>/dev/null | grep -q '^iOS '; then \
+	@# Captured before grepping. Piping into `grep -q` lets it close the pipe on
+	@# the first match, simctl takes SIGPIPE, and under pipefail the probe reports
+	@# failure -- telling a machine that HAS a runtime that it has none.
+	@runtimes="$$(xcrun simctl list runtimes 2>/dev/null || true)"; \
+	if ! printf '%s\n' "$$runtimes" | grep -q '^iOS '; then \
 		printf 'error: no iOS simulator runtime installed.\n'; \
 		printf '  Install one with:  xcodebuild -downloadPlatform iOS   (~10 GB)\n'; \
 		exit 1; \
@@ -108,10 +118,22 @@ run-ios: generate ## Build and launch the app in the iOS Simulator
 	@xcodebuild build \
 		-project $(PROJECT) -scheme HanReader-iOS -configuration Debug \
 		-destination '$(IOS_DEST)' -derivedDataPath $(BUILD_DIR) -quiet
-	@xcrun simctl boot "$(IOS_DEVICE)" 2>/dev/null || true
-	@open -a Simulator
-	@xcrun simctl install booted "$(BUILD_DIR)/Build/Products/Debug-iphonesimulator/HanReader.app"
-	@xcrun simctl launch booted org.openipc.hanreader
+	@# Target the requested device by UDID throughout. `simctl install booted`
+	@# would install into whichever simulator happens to be booted -- a different
+	@# device than the one just built for, or none at all.
+	@udid="$$(xcrun simctl list devices available -j \
+		| python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
+print(next((x['udid'] for v in d.values() for x in v if x['name']=='$(IOS_DEVICE)'), ''))")"; \
+	if [ -z "$$udid" ]; then \
+		printf 'error: no available simulator named %s\n' "$(IOS_DEVICE)"; \
+		printf '  Available:\n'; xcrun simctl list devices available | grep -E '^    ' | head -12; \
+		printf '  Override with: make run-ios IOS_DEVICE="iPhone 16"\n'; \
+		exit 1; \
+	fi; \
+	xcrun simctl bootstatus "$$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$$udid"; \
+	open -a Simulator --args -CurrentDeviceUDID "$$udid"; \
+	xcrun simctl install "$$udid" "$(BUILD_DIR)/Build/Products/Debug-iphonesimulator/HanReader.app"; \
+	xcrun simctl launch "$$udid" org.openipc.hanreader
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -133,14 +155,14 @@ test-all: test ## Run package tests plus both application test suites
 
 # ── Lint and format ──────────────────────────────────────────────────────────
 
-lint: $(SWIFTLINT) $(SWIFTFORMAT) ## Check formatting and lint rules
+lint: $(TOOLS_STAMP) ## Check formatting and lint rules
 	@$(SWIFTFORMAT) --lint .
 	@$(SWIFTLINT) lint --strict --quiet
 
-format: $(SWIFTFORMAT) ## Apply formatting
+format: $(TOOLS_STAMP) ## Apply formatting
 	@$(SWIFTFORMAT) .
 
-format-check: $(SWIFTFORMAT)
+format-check: $(TOOLS_STAMP)
 	@$(SWIFTFORMAT) --lint .
 
 # ── Housekeeping ─────────────────────────────────────────────────────────────
