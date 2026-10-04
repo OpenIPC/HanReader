@@ -4,6 +4,16 @@ import Foundation
 import HanReaderCore
 import HanReaderPersistence
 
+/// `HanReaderCore.LibraryItem` under a name SwiftUI does not also use.
+///
+/// SwiftUI has a `LibraryItem` of its own, for Xcode's view library, so the
+/// bare name is ambiguous in any file that imports both. Qualifying does not
+/// help: this package's namespace enum is also called `HanReaderCore`, so
+/// `HanReaderCore.LibraryItem` resolves to a member of the enum rather than
+/// of the module. The alias is declared here because this file does not
+/// import SwiftUI, which is the only place the name is unambiguous.
+typealias LibraryListItem = LibraryItem
+
 /// What happened when the reader imported a file.
 ///
 /// A value rather than a thrown error for the duplicate case, because it is

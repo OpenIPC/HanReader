@@ -98,6 +98,177 @@ enum ReaderFixtures {
     }
 }
 
+// MARK: - Fixture host
+
+/// The reading surface over the built-in fixtures.
+///
+/// Scaffolding, and deliberately shaped like what replaces it: the selection
+/// and reveal state live here rather than in the views, the style is resolved
+/// once and passed down as a value, and every input the surface takes is
+/// already the input the real model will supply.
+struct FixtureReader: View {
+    @State private var fontSize = 22.0
+    @State private var spacing = WordSpacing.separated
+    @State private var selection: TokenID?
+    @State private var topBlock: Int?
+
+    /// Dynamic Type as a number.
+    ///
+    /// `@ScaledMetric` is the only way to read the user's text-size setting as
+    /// a ratio — `DynamicTypeSize` is an ordered enum with no numeric value,
+    /// and hard-coding a table of multipliers would drift from whatever the
+    /// system actually does. Scaling a round number and dividing gives the
+    /// real factor.
+    @ScaledMetric(relativeTo: .body) private var textScaleProbe = 100.0
+
+    /// Present and `.regular` on macOS, so this needs no platform branch.
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var style: ReaderStyle {
+        ReaderStyle(
+            fontSize: fontSize,
+            spacing: spacing,
+            textScale: textScaleProbe / 100,
+            // Without this the 18pt compact floor exists only in its own
+            // tests. On an iPhone, 14pt scaled down by Dynamic Type's 0.9
+            // gives a 12.6pt glyph, and a tap target to match -- which is the
+            // one place the 44pt guarantee can be bought back, since a word's
+            // target is its text and cannot be padded without overlapping the
+            // word beside it.
+            minimumFontSize: sizeClass == .compact
+                ? ReaderStyle.compactFontSizeFloor
+                : ReaderStyle.fontSizeRange.lowerBound,
+        )
+    }
+
+    private var document: SegmentedDocument {
+        ReaderFixtures.prose
+    }
+
+    /// Which words show their reading.
+    ///
+    /// Every occurrence of a revealed word, which is the prototype's default
+    /// behaviour and so what fidelity requires — but held as a set of *words*
+    /// with selection tracked separately. That separation is what makes
+    /// tapping a second instance of an already-revealed word select it
+    /// instead of appearing to do nothing.
+    @State private var reveal = RevealSet(mode: .allOccurrences)
+
+    var body: some View {
+        ReaderSurface(
+            document: document,
+            style: style,
+            readings: ReaderFixtures.readingsByWord,
+            selection: selection,
+            reveal: reveal,
+            onTap: select,
+            topBlock: $topBlock,
+        )
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            FixtureDetailPanel(token: selection.flatMap { document[$0] }, style: style)
+        }
+        .toolbar { controls }
+        .navigationTitle(Text(verbatim: "HanReader"))
+    }
+
+    @ToolbarContentBuilder
+    private var controls: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Picker(selection: $spacing) {
+                Text("Separated words").tag(WordSpacing.separated)
+                Text("Continuous text").tag(WordSpacing.continuous)
+            } label: {
+                Text("Word spacing")
+            }
+            .pickerStyle(.segmented)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                fontSize = min(fontSize + 2, ReaderStyle.fontSizeRange.upperBound)
+            } label: {
+                Label("Larger text", systemImage: "textformat.size.larger")
+            }
+            // The "=" key, not "+". On most layouts `+` is the shifted `=`,
+            // so binding it means the advertised ⌘+ fires only as ⌘⇧+ while
+            // ⌘= -- which is what people actually press, and what every other
+            // Mac app accepts -- does nothing at all.
+            .keyboardShortcut("=", modifiers: .command)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                fontSize = max(fontSize - 2, ReaderStyle.fontSizeRange.lowerBound)
+            } label: {
+                Label("Smaller text", systemImage: "textformat.size.smaller")
+            }
+            .keyboardShortcut("-", modifiers: .command)
+        }
+    }
+
+    /// Selects a token, and reveals every occurrence of its word.
+    ///
+    /// Tapping the *same* token again clears the selection and hides the word
+    /// again. Tapping a *different* instance of a word that is already
+    /// revealed moves the selection and leaves the reveal in place — the fix
+    /// for the prototype's single `Set<String>`, where any instance's tap
+    /// toggled every instance.
+    private func select(_ id: TokenID) {
+        guard let token = document[id] else { return }
+        if selection == id {
+            selection = nil
+            reveal.hide(token)
+        } else {
+            selection = id
+            reveal.reveal(token)
+        }
+    }
+}
+
+/// A placeholder for the word-detail panel.
+///
+/// Fixed height from the first version, because that is the property that
+/// matters and the one most easily lost later: a panel that grows to fit its
+/// content pushes the body text down every time a word with a longer
+/// definition is tapped. Definitions arrive once the dictionary is wired up;
+/// the geometry is settled now.
+struct FixtureDetailPanel: View {
+    let token: Token?
+    let style: ReaderStyle
+
+    @ScaledMetric private var height = ReaderMetrics.detailPanelHeight
+    @ScaledMetric private var headwordWidth = ReaderMetrics.detailHeadwordWidth
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            if let token {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: token.text)
+                        .font(ReaderFont.base(style))
+                    if let reading = ReaderFixtures.readingsByWord[token.text] {
+                        Text(verbatim: reading.display)
+                            .font(ReaderFont.ruby(style))
+                            .foregroundStyle(ReaderColor.ruby)
+                    }
+                }
+                .frame(width: headwordWidth, alignment: .leading)
+
+                Text("Definitions arrive with the dictionary in the next pull request.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Tap a word to see its reading.")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, ReaderMetrics.readingColumnPadding)
+        .padding(.vertical, 12)
+        .frame(height: height, alignment: .top)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+    }
+}
+
 // MARK: - Previews
 
 #Preview("Separated, nothing revealed") {
