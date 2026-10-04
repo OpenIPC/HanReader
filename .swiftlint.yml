@@ -66,6 +66,13 @@ disabled_rules:
   # the same thing differently makes both untrustworthy, so formatting rules
   # belong to the formatter.
   - opening_brace
+  # And again, for the same reason. SwiftFormat's `modifierOrder` writes
+  # `public nonisolated` and `final nonisolated`; this rule demands
+  # `nonisolated` first. With both on, `make format` and `make lint` rewrite
+  # the same line back and forth forever -- which came up on four separate
+  # declarations before the rule was turned off. Ordering is the formatter's
+  # job.
+  - modifier_order
 
 line_length:
   warning: 100

@@ -5,53 +5,68 @@ import HanReaderPlayback
 public import SwiftUI
 import UniformTypeIdentifiers
 
-/// The application's root view, shared by both targets.
+/// The app's databases, settings and synthesizer.
 ///
-/// Owns the app-scoped state: the services, the settings and the speech
-/// synthesizer, created **once** here rather than inside a content view. The
-/// prototype created its `AppModel` inside `ContentView`, which on macOS
-/// means one per window — two windows meant two dictionary handles and two
-/// caches warming separately.
-public struct HanReaderRootView: View {
+/// Held by the `App`, not by a view, and that distinction is the whole
+/// point. The predecessor prototype created its `AppModel` inside
+/// `ContentView`, which on macOS means **one per window**: two windows meant
+/// two database handles, two dictionary caches and two of everything else,
+/// each warming separately. An earlier draft of this file reintroduced
+/// exactly that by keeping the launch state in `@State` on the root view —
+/// a `WindowGroup` builds its content once per window.
+///
+/// So each platform's `@main` owns one of these and passes it down. Two
+/// lines of duplication across the two targets, against a shared mutable
+/// singleton or a bug that only appears when somebody opens a second window.
+@Observable
+@MainActor
+public final class HanReaderLaunch {
+    /// Internal: the app targets only ever construct this and hand it to
+    /// `HanReaderRootView`. Everything it holds is an implementation
+    /// detail of this module.
+    enum State {
+        case loading
+        case ready(AppServices, Settings, SpeechModel)
+        case failed(String)
+    }
+
+    private(set) var state: State = .loading
+
     public init() {}
 
-    public var body: some View {
-        RootContent()
-    }
-}
-
-/// What happened when the app tried to open its databases.
-private enum LaunchState {
-    case loading
-    case ready(AppServices, Settings, SpeechModel)
-    case failed(String)
-
-    @MainActor
-    static func start() -> Self {
+    /// Opens the databases. Safe to call repeatedly; only the first does
+    /// anything, because every window's root view calls it on appear.
+    func start() {
+        guard case .loading = state else { return }
         do {
-            return try .ready(AppServices.launch(), Settings(), SpeechModel())
+            state = try .ready(AppServices.launch(), Settings(), SpeechModel())
         } catch {
             // Only a failure to open the *library* reaches here. A missing
             // or unreadable dictionary is handled inside `AppServices` and
             // degrades to a reader with no annotations, because refusing to
             // launch would turn a degraded reader into no reader.
             Log.error("launch", "could not open the library: \(error)")
-            return .failed(error.localizedDescription)
+            state = .failed(error.localizedDescription)
         }
     }
 }
 
-private struct RootContent: View {
-    @State private var launch = LaunchState.loading
+/// The application's root view, shared by both targets.
+public struct HanReaderRootView: View {
+    private let launch: HanReaderLaunch
     @State private var selection: TextID?
 
-    var body: some View {
-        switch launch {
+    public init(launch: HanReaderLaunch) {
+        self.launch = launch
+    }
+
+    public var body: some View {
+        switch launch.state {
         case .loading:
             // Opening a prepared dictionary container takes about a
             // millisecond, so there is nothing worth showing a spinner for.
             Color.clear
-                .task { launch = LaunchState.start() }
+                .task { launch.start() }
         case let .failed(message):
             ContentUnavailableView(
                 "HanReader could not start",
@@ -79,6 +94,21 @@ private struct LibraryAndReader: View {
     @State private var library: LibraryModel
     @State private var importer: TextImporter
     @State private var isFileImporterPresented = false
+    @State private var duplicateNotice = false
+
+    /// Whichever failure is outstanding.
+    ///
+    /// The library's errors were previously recorded and never shown, so a
+    /// library that failed to load looked like a library with nothing in it,
+    /// and a failed deletion looked like a deletion that had worked.
+    private var failure: String? {
+        importer.error ?? library.error?.localizedDescription
+    }
+
+    private func clearFailure() {
+        importer.error = nil
+        library.clearError()
+    }
 
     init(
         services: AppServices,

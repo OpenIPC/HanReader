@@ -16,7 +16,13 @@ public import HanReaderCore
 /// Everything is copied in at import. No security-scoped bookmarks, no
 /// resolving a stale URL later, no "the file has moved" failure mode months
 /// after the fact.
-public enum FileIngest {
+///
+/// `nonisolated` matters here. This module compiles with
+/// `defaultIsolation(MainActor.self)`, so without it every one of these
+/// methods would be main-actor-isolated — and reading a book-length file
+/// would block the interface for as long as it took to decode, no matter
+/// what the caller wrapped it in.
+public nonisolated enum FileIngest {
     /// Runs `body` with security-scoped access to `url`.
     ///
     /// `stopAccessing` is called **only** if `startAccessing` returned true.

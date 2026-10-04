@@ -47,7 +47,11 @@ final class LibraryModel {
     /// the spinner off while the other is still running.
     private var loadGeneration = 0
     /// The most recent failure, for the UI to surface and dismiss.
-    var error: (any Error)?
+    private(set) var error: (any Error)?
+
+    func clearError() {
+        error = nil
+    }
 
     init(services: AppServices) {
         self.services = services

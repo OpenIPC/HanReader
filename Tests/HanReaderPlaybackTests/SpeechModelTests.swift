@@ -92,3 +92,37 @@ struct SpeechModelTests {
         #expect(SpeechModel.preferredLanguages.last == "zh")
     }
 }
+
+/// The notice shown when no Chinese voice is installed.
+///
+/// Split out because it needs a model with no voice, which cannot be
+/// arranged on a machine that has one — so the state machine is exercised
+/// directly rather than through `speak`.
+@MainActor
+@Suite("Missing voice notice")
+struct MissingVoiceTests {
+    @Test("Nothing is raised before a word is spoken")
+    func quietUntilAsked() {
+        // A reader who never taps a word does not need to be told about a
+        // voice they were not going to use.
+        #expect(!SpeechModel().needsVoiceNotice)
+    }
+
+    @Test("Acknowledging clears the notice")
+    func acknowledging() {
+        let model = SpeechModel()
+        model.acknowledgeMissingVoice()
+        #expect(!model.needsVoiceNotice)
+    }
+
+    /// With a voice installed, speaking must not raise the notice — which
+    /// is the half of this that can be checked on this machine.
+    @Test("A machine with a voice is never nagged")
+    func noNoticeWhenAVoiceExists() throws {
+        try #require(SpeechModel.bestChineseVoice() != nil, "no Chinese voice installed")
+        let model = SpeechModel()
+        model.speak("中国")
+        model.stop()
+        #expect(!model.needsVoiceNotice)
+    }
+}

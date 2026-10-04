@@ -41,7 +41,7 @@ final class TextImporter {
     /// Imports the file the reader picked.
     func open(_ url: URL) async {
         do {
-            let detected = try FileIngest.readText(at: url)
+            let detected = try await Self.read(url)
             await store(detected.text, from: url)
         } catch let TextImportError.undeterminedEncoding(previews) {
             pending = PendingImport(
@@ -63,7 +63,7 @@ final class TextImporter {
             // Decoded again from the file rather than reusing the preview.
             // The preview is a truncated sample by design, so using it would
             // import the first few hundred characters of the book.
-            let detected = try FileIngest.readText(at: pending.url, as: encoding)
+            let detected = try await Self.read(pending.url, as: encoding)
             await store(detected.text, from: pending.url)
         } catch {
             Log.error("import", "could not read \(pending.fileName) as \(encoding): \(error)")
@@ -73,6 +73,25 @@ final class TextImporter {
 
     func cancel() {
         pending = nil
+    }
+
+    /// Reads and decodes off the main actor.
+    ///
+    /// `nonisolated` is what moves the work: this type is `@MainActor`, so
+    /// without it the whole file would be read and decoded before the method
+    /// could suspend, freezing the interface for as long as a book takes to
+    /// decode — which the surrounding `Task` does nothing to prevent,
+    /// because that task is main-actor-isolated too.
+    private nonisolated static func read(
+        _ url: URL,
+        as encoding: SourceTextEncoding? = nil,
+    ) async throws
+        -> DetectedText
+    {
+        if let encoding {
+            return try FileIngest.readText(at: url, as: encoding)
+        }
+        return try FileIngest.readText(at: url)
     }
 
     func acknowledge() {

@@ -18,8 +18,14 @@ struct WordDetailContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                ForEach(Array(detail.entries.enumerated()), id: \.offset) { _, entry in
-                    entryView(entry)
+                if detail.isDefined {
+                    ForEach(Array(detail.entries.enumerated()), id: \.offset) { _, entry in
+                        entryView(entry)
+                    }
+                } else {
+                    Text("No entry in the dictionary for this word.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

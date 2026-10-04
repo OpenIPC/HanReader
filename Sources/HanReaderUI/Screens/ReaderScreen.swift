@@ -42,15 +42,30 @@ struct ReaderScreen: View {
     var body: some View {
         content
             .task(id: textID) {
-                let model = ReaderModel(
+                // The previous model is closed before the next is built.
+                // `.task(id:)` cancels its own task when the id changes, but
+                // the unstructured work the model holds -- the debounced
+                // position save, the reading window, the detail lookup --
+                // has no relationship to it, so switching texts in the
+                // sidebar would leave the old text's work running and its
+                // position unwritten.
+                if let previous = model {
+                    await previous.close()
+                }
+                speech.stop()
+                let next = ReaderModel(
                     textID: textID,
                     services: services,
                     settings: settings,
                 )
-                self.model = model
-                await model.load()
+                model = next
+                await next.load()
             }
             .onDisappear {
+                // An utterance outlives the view that started it: the
+                // synthesizer is app-scoped, so without this a word spoken
+                // in one text carries on into the next.
+                speech.stop()
                 let model = model
                 Task { await model?.close() }
             }
@@ -62,6 +77,27 @@ struct ReaderScreen: View {
                 Task { await model.flushPosition() }
             }
             .toolbar { toolbar }
+            .alert(
+                "No Chinese voice is installed",
+                isPresented: Binding(
+                    get: { speech.needsVoiceNotice },
+                    set: {
+                        if !$0 {
+                            speech.acknowledgeMissingVoice()
+                        }
+                    },
+                ),
+            ) {
+                Button("OK", role: .cancel) { speech.acknowledgeMissingVoice() }
+            } message: {
+                Text(
+                    """
+                    HanReader cannot speak words aloud until a Chinese voice \
+                    is added in System Settings, under Accessibility, \
+                    Spoken Content, System Voice.
+                    """,
+                )
+            }
     }
 
     @ViewBuilder

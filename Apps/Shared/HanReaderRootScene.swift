@@ -11,15 +11,12 @@ import SwiftUI
 /// the body in one place is what makes "two app targets" a packaging detail
 /// rather than two codebases.
 ///
-/// The view itself lives in `HanReaderUI` so that both targets, the previews
-/// and the test suite see exactly the same code. This file holds no reader
-/// logic and is not expected to grow any.
+/// The `launch` it is handed is owned by the `App`, so it is created once per
+/// process rather than once per window — see `HanReaderLaunch`.
 struct HanReaderRootScene: View {
-    var body: some View {
-        HanReaderRootView()
-    }
-}
+    let launch: HanReaderLaunch
 
-#Preview {
-    HanReaderRootScene()
+    var body: some View {
+        HanReaderRootView(launch: launch)
+    }
 }

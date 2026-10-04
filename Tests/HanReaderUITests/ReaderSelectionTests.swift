@@ -172,7 +172,12 @@ struct ReaderSelectionTests {
         #expect(detail.entries.count == 1)
     }
 
-    @Test("A word the dictionary does not have reports not found")
+    /// A word with no entry is still a loaded detail, not a state of its
+    /// own. As a separate state it had nowhere to carry the reading, so
+    /// tapping a word the dictionary does not define removed the pinyin
+    /// that was already visible above it — which for a word composed from
+    /// its characters is exactly the annotation worth keeping.
+    @Test("A word the dictionary does not have is reported as undefined")
     func detailNotFound() async throws {
         let fixture = try await makeModel()
         let model = fixture.model
@@ -182,10 +187,37 @@ struct ReaderSelectionTests {
         model.tap(token.id)
         try await waitForDetail(model)
 
-        guard case .notFound = model.detail else {
-            Issue.record("expected not found, got \(model.detail)")
+        guard case let .loaded(detail) = model.detail else {
+            Issue.record("expected a loaded detail, got \(model.detail)")
             return
         }
+        #expect(detail.word == "书")
+        #expect(!detail.isDefined)
+        #expect(detail.entries.isEmpty)
+    }
+
+    /// The reading survives even though the entry does not.
+    @Test("An undefined word keeps the reading composed for it")
+    func undefinedWordKeepsItsReading() async throws {
+        let fixture = try await ModelTestSupport.makeFixture(
+            source: "北京。\n",
+            lookup: ModelTestSupport.CharacterOnlyDictionary(),
+        )
+        let model = fixture.model
+        await model.load()
+        let token = try #require(firstToken("北京", in: model)
+            ?? firstToken("北", in: model))
+
+        model.tap(token.id)
+        try await waitForDetail(model)
+
+        guard case let .loaded(detail) = model.detail else {
+            Issue.record("expected a loaded detail, got \(model.detail)")
+            return
+        }
+        #expect(!detail.isDefined)
+        #expect(detail.reading?.source == .composed)
+        #expect(detail.reading?.display.isEmpty == false)
     }
 
     /// A lookup in flight when the selection is cleared must not land. It

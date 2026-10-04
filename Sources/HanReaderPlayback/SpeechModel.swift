@@ -37,6 +37,15 @@ public final class SpeechModel {
     public private(set) var isSpeaking = false
     public private(set) var voiceStatus: SpeechVoiceStatus
 
+    /// Set the first time speaking is attempted with no voice installed.
+    ///
+    /// Raised on the attempt rather than at launch: a reader who never taps
+    /// a word does not need to be told about a voice they were not going to
+    /// use. Cleared by `acknowledgeMissingVoice()` and not raised again, so
+    /// it is a notice rather than a nag.
+    public private(set) var needsVoiceNotice = false
+    private var hasGivenVoiceNotice = false
+
     private let synthesizer: AVSpeechSynthesizer
     private let voice: AVSpeechSynthesisVoice?
     private let observer = SpeechObserver()
@@ -68,7 +77,17 @@ public final class SpeechModel {
     ///   speaking as well says the word twice, over itself, in two different
     ///   voices. The caller decides because only the view knows.
     public func speak(_ text: String, suppressed: Bool = false) {
-        guard !suppressed, !text.isEmpty, let voice else { return }
+        guard !suppressed, !text.isEmpty else { return }
+        guard let voice else {
+            // The prototype's behaviour here was nothing at all, which is
+            // indistinguishable from a broken app — and a Mac with no
+            // Chinese voice installed is the common case, not an exotic one.
+            if !hasGivenVoiceNotice {
+                hasGivenVoiceNotice = true
+                needsVoiceNotice = true
+            }
+            return
+        }
 
         // Stopped rather than queued. Tapping along a sentence should say
         // each word as it is tapped, not read back the whole trail of them
@@ -80,6 +99,10 @@ public final class SpeechModel {
         utterance.rate = Self.rate
         synthesizer.speak(utterance)
         isSpeaking = true
+    }
+
+    public func acknowledgeMissingVoice() {
+        needsVoiceNotice = false
     }
 
     public func stop() {

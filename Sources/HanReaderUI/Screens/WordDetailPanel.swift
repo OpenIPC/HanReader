@@ -62,15 +62,17 @@ struct WordDetailPanel: View {
             .redacted(reason: .placeholder)
 
         case let .loaded(detail):
+            // One case, whether or not the dictionary defines the word. As
+            // two, the "not found" branch had no reading to pass and so
+            // removed the pinyin that was already visible above the word —
+            // which for a word composed from its characters is exactly the
+            // reading the reader most wants to keep looking at.
             entryRow(
                 word: detail.word,
                 reading: detail.reading,
                 summary: nil,
                 senses: detail.entries,
             )
-
-        case let .notFound(word):
-            entryRow(word: word, reading: nil, summary: nil, senses: [])
         }
     }
 
@@ -127,6 +129,10 @@ struct WordDetailPanel: View {
                 Button(action: onExpand) {
                     Label("Show all senses", systemImage: "text.justify.left")
                 }
+                // Offered even with no entries, because there is still
+                // something to show there: the reading, and why it is only
+                // an approximation.
+                .disabled(detail.reading == nil && !detail.isDefined)
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
