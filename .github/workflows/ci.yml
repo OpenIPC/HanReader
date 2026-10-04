@@ -62,18 +62,13 @@ jobs:
             exit 1
           fi
 
-      - name: CC-CEDICT attribution carries its required statements
-        # CC BY-SA 4.0 requires creator, source, license and a statement of
-        # modifications. The last of these is the commonly omitted one.
-        run: |
-          set -euo pipefail
-          f=Dictionaries/cc-cedict/README.md
-          for needle in "Creator:" "Source:" "License:" "Changes made:"; do
-            grep -qF "$needle" "$f" \
-              || { echo "::error file=$f::required attribution field '$needle' is missing"; exit 1; }
-          done
-          grep -qF "creativecommons.org/licenses/by-sa/4.0" "$f" \
-            || { echo "::error file=$f::the license URI is missing"; exit 1; }
+      - name: Dictionary licence statements all agree
+        # Checks the data's own header against SOURCE.json, the quoted
+        # attribution and the committed legalcode. Pinning a version here
+        # instead would mean a correctly refreshed snapshot fails for being
+        # right -- which is exactly what happened when the pin moved to a 3.0
+        # source and this check still demanded the 4.0 URI.
+        run: ./Scripts/check-dictionary-licence.sh
 
       - name: No redistributable-restricted dictionary data was committed
         # The licensing guard that matters most in practice. BKRS is not ours to
@@ -499,10 +494,11 @@ jobs:
           set -euo pipefail
           source_file=Dictionaries/cc-cedict/cedict_ts.u8
           record=Dictionaries/cc-cedict/SOURCE.json
-          if [ ! -f "$source_file" ]; then
-            echo "::notice::no pinned snapshot yet; skipping"
-            exit 0
-          fi
+          # Absence is a failure, not a skip. The snapshot is committed, so a
+          # missing one means it was removed -- and a job that reports success
+          # for an absent dictionary is worse than no job.
+          [ -f "$source_file" ] || {
+            echo "::error file=$source_file::the pinned snapshot is missing"; exit 1; }
           [ -f "$record" ] || { echo "::error file=$record::missing"; exit 1; }
 
           recorded=$(python3 -c "import json;print(json.load(open('$record'))['sha256'])")
@@ -514,19 +510,10 @@ jobs:
             exit 1
           fi
 
-          # The licence recorded must be the one the data declares. A pinned
-          # snapshot and an attribution naming different terms is a false
-          # licensing statement.
-          declared=$(grep -m1 '^#! license=' "$source_file" | cut -d= -f2- | tr -d '\r')
-          recorded_licence=$(python3 -c "import json;print(json.load(open('$record'))['license'])")
-          if [ "$declared" != "$recorded_licence" ]; then
-            echo "::error file=$record::license disagrees with the data"
-            echo "  data says:   $declared"
-            echo "  record says: $recorded_licence"
-            exit 1
-          fi
           echo "snapshot verified: $actual"
-          echo "licence:           $declared"
+
+      - name: Licence statements all agree
+        run: ./Scripts/check-dictionary-licence.sh
 
       - uses: actions/cache@v4
         with:
@@ -534,13 +521,7 @@ jobs:
           key: dict-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
 
       - name: Compile and verify
-        run: |
-          set -euo pipefail
-          if [ ! -f Dictionaries/cc-cedict/cedict_ts.u8 ]; then
-            echo "::notice::no pinned snapshot yet; skipping compilation"
-            exit 0
-          fi
-          make dict
+        run: make dict
 
   required-checks:
     # The single required status check for branch protection. Adding or renaming

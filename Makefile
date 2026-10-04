@@ -33,7 +33,7 @@ MACOS_DEST := platform=macOS
 IOS_DEST   := platform=iOS Simulator,name=$(IOS_DEVICE)
 
 .PHONY: help bootstrap generate open run run-ios test test-all test-macos test-ios \
-        lint format format-check dict dict-check clean distclean doctor
+        lint format format-check dict dict-check dict-licence dict-force clean distclean doctor
 
 help: ## Show this help
 	@printf 'HanReader\n\n'
@@ -81,7 +81,17 @@ $(CEDICT_SOURCE):
 	@printf 'are reproducible -- CC-CEDICT changes upstream almost daily.\n'
 	@exit 1
 
-$(CEDICT_OUTPUT): $(CEDICT_SOURCE) $(shell find Sources/HanReaderCore Sources/HanReaderPersistence Sources/hanreader-dictgen -name '*.swift' 2>/dev/null)
+# Prerequisites cover everything that can change the output: the pinned source,
+# the compiler's own sources, and the package manifests. A `find` alone is not
+# enough -- a DELETED Swift file simply vanishes from the list, so make would
+# see fewer prerequisites and consider an existing container up to date. The
+# manifests are listed because a dependency or build-setting change alters the
+# compiler without touching any .swift file.
+CEDICT_DEPS := $(CEDICT_SOURCE) Package.swift Package.resolved \
+               $(shell find Sources/HanReaderCore Sources/HanReaderPersistence \
+                            Sources/hanreader-dictgen -name '*.swift' 2>/dev/null)
+
+$(CEDICT_OUTPUT): $(CEDICT_DEPS)
 	@mkdir -p Resources/Generated
 	@printf 'Compiling the bundled dictionary...\n'
 	@swift run -q -c release hanreader-dictgen cedict "$(CEDICT_SOURCE)" -o "$(CEDICT_OUTPUT)" --verbose
@@ -89,6 +99,14 @@ $(CEDICT_OUTPUT): $(CEDICT_SOURCE) $(shell find Sources/HanReaderCore Sources/Ha
 
 dict-check: ## Report whether the pinned CC-CEDICT snapshot is out of date
 	@./Scripts/update-cedict.sh --check
+
+dict-licence: ## Check that every licence statement matches the pinned data
+	@./Scripts/check-dictionary-licence.sh
+
+# Forces a rebuild regardless of timestamps, for when a prerequisite is missed.
+dict-force: ## Recompile the bundled dictionary unconditionally
+	@rm -f $(CEDICT_OUTPUT)
+	@$(MAKE) dict
 
 # ── Xcode project ────────────────────────────────────────────────────────────
 

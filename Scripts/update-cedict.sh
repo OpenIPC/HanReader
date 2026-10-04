@@ -10,7 +10,9 @@
 #     ./Scripts/update-cedict.sh            # fetch the latest and repin
 #     ./Scripts/update-cedict.sh --check    # report drift, change nothing
 #
-# A scheduled CI job runs this and opens a pull request when upstream moves.
+# A scheduled CI job runs this with --check monthly and opens an ISSUE when
+# upstream moves. It never commits: a refresh can change the declared licence,
+# which requires updating the attribution and legalcode to match.
 
 set -euo pipefail
 

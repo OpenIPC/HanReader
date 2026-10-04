@@ -1,0 +1,112 @@
+name: Dictionary refresh
+
+# CC-CEDICT changes upstream almost daily, and the snapshot here is pinned, so
+# without something watching it the bundled dictionary quietly ages. This
+# checks monthly and opens an issue when upstream has moved.
+#
+# It deliberately does NOT commit anything. Refreshing the snapshot can change
+# the declared licence — the currently pinned mirror is CC BY-SA 3.0 while
+# upstream is 4.0 — and that requires updating the attribution, the committed
+# legalcode and several documents to match. That is a judgement a person
+# should make, not something a scheduled job should push.
+
+on:
+  schedule:
+    # 04:00 UTC on the first of each month.
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check for a newer snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the pinned snapshot with upstream
+        id: check
+        run: |
+          set -uo pipefail
+          # --check reports drift without writing anything, and exits non-zero
+          # when upstream has moved.
+          if output=$(./Scripts/update-cedict.sh --check 2>&1); then
+            echo "status=current" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            # Distinguish "upstream moved" from "the download failed", which
+            # happens often: mdbg.net rate-limits aggressively.
+            if printf '%s' "$output" | grep -q "download failed"; then
+              echo "status=unreachable" >> "$GITHUB_OUTPUT"
+            else
+              echo "status=stale" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          {
+            echo "report<<REPORT"
+            printf '%s\n' "$output"
+            echo "REPORT"
+          } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+
+      - name: Open an issue when upstream has moved
+        if: steps.check.outputs.status == 'stale'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `${{ toJSON(steps.check.outputs.report) }}`;
+            const title = 'Refresh the pinned CC-CEDICT snapshot';
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'dictionary',
+            });
+            if (existing.data.some(issue => issue.title === title)) {
+              core.info('An open refresh issue already exists.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              labels: ['dictionary'],
+              body: [
+                'Upstream CC-CEDICT has changed since the pinned snapshot.',
+                '',
+                '```',
+                JSON.parse(report),
+                '```',
+                '',
+                '### To refresh',
+                '',
+                '```sh',
+                './Scripts/update-cedict.sh   # repins and rewrites SOURCE.json',
+                'make dict                    # recompile and verify',
+                'make dict-licence            # check every licence statement agrees',
+                '```',
+                '',
+                '### Check the licence',
+                '',
+                'A refresh can change the declared licence. The snapshot pinned today',
+                'is CC BY-SA **3.0** (from a mirror), while current upstream is **4.0**.',
+                'If the version changes you must also update:',
+                '',
+                '- `Dictionaries/cc-cedict/LICENSE` — the committed legalcode',
+                '- `Dictionaries/cc-cedict/README.md` — the quoted attribution',
+                '',
+                '`make dict-licence` fails until all four agree, so it will tell you.',
+                '',
+                '_Opened automatically; this job never commits._',
+              ].join('\n'),
+            });
+
+      - name: Note when upstream could not be reached
+        if: steps.check.outputs.status == 'unreachable'
+        run: |
+          echo "::warning::could not reach mdbg.net — it rate-limits heavily. Not treated as drift."

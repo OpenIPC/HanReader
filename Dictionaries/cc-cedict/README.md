@@ -73,7 +73,13 @@ date of the pinned file.
 
 Do not replace the pinned file by hand. Run `Scripts/update-cedict.sh`, which
 re-downloads, re-verifies, regenerates `SOURCE.json`, and leaves the result for
-review. A scheduled CI job does the same thing monthly and opens the PR for you.
+review.
+
+A scheduled job checks monthly and **opens an issue** when upstream has moved.
+It deliberately does not commit: a refresh can change the declared licence, and
+that requires updating the attribution and the committed legalcode to match —
+a judgement for a person, not a cron job. `make dict-licence` fails until all
+four statements agree, so nothing can drift silently.
 
 ## Why this dictionary is load-bearing beyond English glosses
 
