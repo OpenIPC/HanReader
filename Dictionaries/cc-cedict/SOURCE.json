@@ -1,0 +1,13 @@
+{
+  "url": "https://raw.githubusercontent.com/regisb/CC-CEDICT/master/cedict_ts.u8",
+  "upstream": "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.zip",
+  "file": "cedict_ts.u8",
+  "sha256": "8b77bf4833807411e7f221c007b97e7982955c790e9655dd4afda36b56283147",
+  "bytes": 8149887,
+  "entries": 107619,
+  "version": "1",
+  "date": "2013-08-28T08:05:53Z",
+  "license": "http://creativecommons.org/licenses/by-sa/3.0/",
+  "retrieved": "2026-10-04T10:14:58Z",
+  "note": "Fetched from a GitHub mirror because mdbg.net was serving at roughly 12 KB per 8 minutes. This is an older snapshot than current upstream: it declares CC BY-SA 3.0 and carries 107,619 entries, where current MDBG declares CC BY-SA 4.0 with about 125,000. Refresh with ./Scripts/update-cedict.sh when mdbg.net is reachable, and update the licence quoted in README.md to match."
+}

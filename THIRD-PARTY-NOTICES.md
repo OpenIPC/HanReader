@@ -20,8 +20,10 @@ compiled into a SQLite database at build time.
 - **Creator:** The CC-CEDICT Project (originally MDBG, continuing the CEDICT
   project begun by Paul Denisowski)
 - **Source:** <https://www.mdbg.net/chinese/dictionary?page=cc-cedict>
-- **License:** Creative Commons Attribution-ShareAlike 4.0 International
-  — <https://creativecommons.org/licenses/by-sa/4.0/>
+- **License:** Creative Commons Attribution-ShareAlike **3.0** Unported
+  — <http://creativecommons.org/licenses/by-sa/3.0/>
+  (the version the *pinned snapshot* declares; current upstream is 4.0 — see
+  [`Dictionaries/cc-cedict/README.md`](Dictionaries/cc-cedict/README.md))
 - **Full license text:** [`Dictionaries/cc-cedict/LICENSE`](Dictionaries/cc-cedict/LICENSE)
 - **Pinned snapshot:** see `Dictionaries/cc-cedict/SOURCE.json` for the exact
   URL, size, SHA-256, entry count, and retrieval date
@@ -32,7 +34,8 @@ compiled into a SQLite database at build time.
   altered, removed, or added.
 
 > **ShareAlike:** a dictionary database generated from CC-CEDICT is an Adapted
-> Work and is itself licensed CC BY-SA 4.0, not MIT. See
+> Work and is itself licensed CC BY-SA, at the version its source declares,
+> not MIT. See
 > [`Dictionaries/cc-cedict/README.md`](Dictionaries/cc-cedict/README.md).
 
 ### GRDB.swift

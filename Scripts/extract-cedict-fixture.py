@@ -10,8 +10,9 @@ slice can be regenerated rather than hand-maintained.
 
 Writes Tests/HanReaderCoreTests/Fixtures/cedict-sample.u8.
 
-The data is CC BY-SA 4.0. See Dictionaries/cc-cedict/README.md for attribution;
-the fixture carries the same terms as the bundled snapshot.
+The data is CC BY-SA, at whatever version the source declares. See
+Dictionaries/cc-cedict/README.md for the attribution; the fixture carries the
+same terms as the bundled snapshot it was cut from.
 """
 
 from __future__ import annotations

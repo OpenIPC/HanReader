@@ -49,8 +49,14 @@ jobs:
           set -euo pipefail
           grep -q "EXCEPT the contents of the Dictionaries/" NOTICE \
             || { echo "::error file=NOTICE::the scope statement excluding Dictionaries/ is gone"; exit 1; }
-          grep -q "CC BY-SA 4.0" NOTICE \
+          # Deliberately version-agnostic. Pinning "4.0" here is what broke
+          # when the snapshot moved to a 3.0 source: the version belongs to the
+          # data, and Scripts/check-dictionary-licence.sh verifies it against
+          # the data's own header. This check only asserts the note exists.
+          grep -q "CC BY-SA" NOTICE \
             || { echo "::error file=NOTICE::the ShareAlike note on generated databases is gone"; exit 1; }
+          grep -q "Adapted Work" NOTICE \
+            || { echo "::error file=NOTICE::the Adapted Work statement is gone"; exit 1; }
 
       - name: LICENSE contains only the license text, so MIT stays detectable
         run: |
@@ -62,18 +68,13 @@ jobs:
             exit 1
           fi
 
-      - name: CC-CEDICT attribution carries its required statements
-        # CC BY-SA 4.0 requires creator, source, license and a statement of
-        # modifications. The last of these is the commonly omitted one.
-        run: |
-          set -euo pipefail
-          f=Dictionaries/cc-cedict/README.md
-          for needle in "Creator:" "Source:" "License:" "Changes made:"; do
-            grep -qF "$needle" "$f" \
-              || { echo "::error file=$f::required attribution field '$needle' is missing"; exit 1; }
-          done
-          grep -qF "creativecommons.org/licenses/by-sa/4.0" "$f" \
-            || { echo "::error file=$f::the license URI is missing"; exit 1; }
+      - name: Dictionary licence statements all agree
+        # Checks the data's own header against SOURCE.json, the quoted
+        # attribution and the committed legalcode. Pinning a version here
+        # instead would mean a correctly refreshed snapshot fails for being
+        # right -- which is exactly what happened when the pin moved to a 3.0
+        # source and this check still demanded the 4.0 URI.
+        run: ./Scripts/check-dictionary-licence.sh
 
       - name: No redistributable-restricted dictionary data was committed
         # The licensing guard that matters most in practice. BKRS is not ours to
@@ -466,12 +467,74 @@ jobs:
           [ "$version" = "$expected" ] \
             || { echo "::error::bundle version $version does not match HANREADER_VERSION $expected"; exit 1; }
 
+  dictionary:
+    # Compiles and checks the bundled dictionary. The failure this exists to
+    # catch is the quiet one: a parser or lexicon change that still produces a
+    # valid, openable database containing half the words. Everything builds,
+    # the app runs, and words simply stop being found -- nobody notices by eye.
+    name: Bundled dictionary
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select the pinned toolchain
+        run: |
+          set -euo pipefail
+          pinned=$(tr -d '[:space:]' < .xcode-version)
+          dir=""
+          for candidate in "/Applications/Xcode_${pinned}.app" "/Applications/Xcode_${pinned}".*.app; do
+            if [ -d "$candidate/Contents/Developer" ]; then dir="$candidate/Contents/Developer"; break; fi
+          done
+          if [ -z "$dir" ]; then
+            echo "::error file=.xcode-version::Xcode $pinned is not installed on this runner."
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none found)"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: The pinned snapshot matches its recorded checksum
+        # Guards against the committed data being altered without SOURCE.json
+        # being updated to match -- which for CC BY-SA material would mean
+        # shipping data whose provenance we can no longer vouch for.
+        run: |
+          set -euo pipefail
+          source_file=Dictionaries/cc-cedict/cedict_ts.u8
+          record=Dictionaries/cc-cedict/SOURCE.json
+          # Absence is a failure, not a skip. The snapshot is committed, so a
+          # missing one means it was removed -- and a job that reports success
+          # for an absent dictionary is worse than no job.
+          [ -f "$source_file" ] || {
+            echo "::error file=$source_file::the pinned snapshot is missing"; exit 1; }
+          [ -f "$record" ] || { echo "::error file=$record::missing"; exit 1; }
+
+          recorded=$(python3 -c "import json;print(json.load(open('$record'))['sha256'])")
+          actual=$(shasum -a 256 "$source_file" | cut -d' ' -f1)
+          if [ "$recorded" != "$actual" ]; then
+            echo "::error file=$source_file::checksum does not match SOURCE.json"
+            echo "  recorded: $recorded"
+            echo "  actual:   $actual"
+            exit 1
+          fi
+
+          echo "snapshot verified: $actual"
+
+      - name: Licence statements all agree
+        run: ./Scripts/check-dictionary-licence.sh
+
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: dict-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile and verify
+        run: make dict
+
   required-checks:
     # The single required status check for branch protection. Adding or renaming
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene, lint, spm-test, architecture, app-build]
+    needs: [hygiene, lint, spm-test, architecture, app-build, dictionary]
     if: always()
     steps:
       - name: Verify all required jobs succeeded

@@ -33,7 +33,7 @@ MACOS_DEST := platform=macOS
 IOS_DEST   := platform=iOS Simulator,name=$(IOS_DEVICE)
 
 .PHONY: help bootstrap generate open run run-ios test test-all test-macos test-ios \
-        lint format format-check dict clean distclean doctor
+        lint format format-check dict dict-check dict-licence dict-force clean distclean doctor
 
 help: ## Show this help
 	@printf 'HanReader\n\n'
@@ -63,14 +63,54 @@ doctor: ## Report toolchain and environment status
 
 # ── Dictionary pipeline ──────────────────────────────────────────────────────
 
-dict: ## Compile the bundled dictionary into Resources/Generated
+CEDICT_SOURCE := Dictionaries/cc-cedict/cedict_ts.u8
+CEDICT_OUTPUT := Resources/Generated/cedict.hanreaderdict
+
+dict: $(CEDICT_OUTPUT) ## Compile the bundled dictionary into Resources/Generated
+
+# Rebuilt when the pinned source changes or the compiler does. Compiling at
+# build time rather than on first launch is what lets the app open a prepared
+# database in under a millisecond instead of spending ~2.6s parsing text.
+# A rule for the source itself, so a missing snapshot produces an instruction
+# rather than make's "No rule to make target".
+$(CEDICT_SOURCE):
+	@printf 'error: the pinned CC-CEDICT snapshot is missing:\n'
+	@printf '  %s\n\n' "$(CEDICT_SOURCE)"
+	@printf 'Fetch it with:\n  ./Scripts/update-cedict.sh\n\n'
+	@printf 'It is pinned rather than downloaded at build time so that builds\n'
+	@printf 'are reproducible -- CC-CEDICT changes upstream almost daily.\n'
+	@exit 1
+
+# Prerequisites cover everything that can change the output: the pinned source,
+# the compiler's own sources, and the package manifests. A `find` alone is not
+# enough -- a DELETED Swift file simply vanishes from the list, so make would
+# see fewer prerequisites and consider an existing container up to date. The
+# manifests are listed because a dependency or build-setting change alters the
+# compiler without touching any .swift file.
+CEDICT_DEPS := $(CEDICT_SOURCE) Package.swift Package.resolved \
+               $(shell find Sources/HanReaderCore Sources/HanReaderPersistence \
+                            Sources/hanreader-dictgen -name '*.swift' 2>/dev/null)
+
+$(CEDICT_OUTPUT): $(CEDICT_DEPS)
 	@mkdir -p Resources/Generated
-	@printf 'Dictionary compilation arrives in milestone M3.\n'
-	@swift run -q hanreader-dictgen --version
+	@printf 'Compiling the bundled dictionary...\n'
+	@swift run -q -c release hanreader-dictgen cedict "$(CEDICT_SOURCE)" -o "$(CEDICT_OUTPUT)" --verbose
+	@swift run -q -c release hanreader-dictgen verify "$(CEDICT_OUTPUT)"
+
+dict-check: ## Report whether the pinned CC-CEDICT snapshot is out of date
+	@./Scripts/update-cedict.sh --check
+
+dict-licence: ## Check that every licence statement matches the pinned data
+	@./Scripts/check-dictionary-licence.sh
+
+# Forces a rebuild regardless of timestamps, for when a prerequisite is missed.
+dict-force: ## Recompile the bundled dictionary unconditionally
+	@rm -f $(CEDICT_OUTPUT)
+	@$(MAKE) dict
 
 # ── Xcode project ────────────────────────────────────────────────────────────
 
-generate: $(TOOLS_STAMP) ## Regenerate the Xcode project from project.yml
+generate: $(TOOLS_STAMP) $(CEDICT_OUTPUT) ## Regenerate the Xcode project from project.yml
 	@# One shell block on purpose. Make runs each recipe line in its own shell,
 	@# so an early `exit 0` in a guard would end only that line and the
 	@# following commands would still run.

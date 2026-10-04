@@ -14,7 +14,7 @@ it needs to read like release notes rather than a commit log.
 ### Added
 
 - Initial repository scaffolding: license boundary between the MIT-licensed
-  source and the CC BY-SA 4.0 bundled dictionary data, contribution guide,
+  source and the CC BY-SA bundled dictionary data, contribution guide,
   security policy, and editor/VCS configuration.
 - SwiftPM package defining the nine-target module graph, with the architecture's
   boundaries enforced by the build: `HanReaderCore` imports only Foundation and
@@ -44,6 +44,10 @@ it needs to read like release notes rather than a commit log.
 - CC-CEDICT parser and the dictionary model, with senses, cross-references
   extracted from gloss text, and entries keyed by headword *and* reading so
   that words with several pronunciations keep all of them.
+- The bundled dictionary itself: a pinned CC-CEDICT snapshot, compiled during
+  the build so a clean clone launches with a working dictionary and no setup.
+  `Scripts/update-cedict.sh` refreshes the pin, and CI fails if the committed
+  data, its checksum and its declared licence ever disagree.
 - Dictionary containers: a self-contained `.hanreaderdict` SQLite file per
   dictionary, carrying its own licence and attribution so the terms travel with
   the data. Compiled at build time rather than on first launch, which is what

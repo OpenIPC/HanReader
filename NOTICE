@@ -10,13 +10,14 @@ everything in this repository EXCEPT the contents of the Dictionaries/
 directory, which is third-party data distributed under its own license.
 
   Source code (Sources/, Apps/, Tests/, Scripts/, Docs/)  ->  MIT
-  Dictionaries/cc-cedict/                                 ->  CC BY-SA 4.0
+  Dictionaries/cc-cedict/                                 ->  CC BY-SA
 
 Note further that a dictionary database generated from CC-CEDICT data is an
-Adapted Work under CC BY-SA 4.0, and is therefore itself licensed CC BY-SA 4.0
--- not MIT. This matters the moment anyone publishes a prebuilt dictionary
-database as a release artifact, or distributes a built application containing
-one. The two licenses coexist; they do not merge.
+Adapted Work under CC BY-SA, and is therefore itself licensed CC BY-SA at the
+version its source declares -- not MIT. This matters the moment anyone
+publishes a prebuilt dictionary database as a release artifact, or distributes
+a built application containing one. The two licenses coexist; they do not
+merge.
 
 (This statement lives here rather than in LICENSE because automated license
 detection requires LICENSE to contain only the license text.)
@@ -30,7 +31,9 @@ complete list of components, their licenses, and the attribution statements
 those licenses require.
 
 In particular, HanReader bundles CC-CEDICT, a Chinese-English dictionary
-licensed under Creative Commons Attribution-ShareAlike 4.0 International.
+licensed under Creative Commons Attribution-ShareAlike. The pinned
+snapshot's exact version is recorded in Dictionaries/cc-cedict/SOURCE.json
+and quoted in that directory's README.
 See Dictionaries/cc-cedict/ for the data, its license, and its attribution.
 
 HanReader does NOT bundle or redistribute the BKRS / 大БКРС Chinese-Russian

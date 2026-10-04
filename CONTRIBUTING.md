@@ -16,7 +16,7 @@ licensing problem, so it gets its own section.
 - **Never commit BKRS / 大БКРС files.** They are not freely licensed and are not
   ours to redistribute. HanReader ships an *importer*, not the data.
 - **Never commit a generated dictionary database.** A database built from
-  CC-CEDICT is an Adapted Work under CC BY-SA 4.0, so redistributing it carries
+  CC-CEDICT is an Adapted Work under CC BY-SA, so redistributing it carries
   obligations the repository's MIT license does not cover.
 - **Do not hand-edit the pinned CC-CEDICT snapshot.** Run
   `Scripts/update-cedict.sh`, which re-downloads, verifies, and regenerates

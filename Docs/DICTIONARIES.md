@@ -5,10 +5,18 @@ all of their glosses for a word at once, each attributed to where it came from.
 
 ## CC-CEDICT (Chinese→English) — bundled
 
-Nothing to do. CC-CEDICT ships with HanReader and is compiled into a fast
-lookup database the first time you launch the app, which takes a couple of
-seconds. It is licensed CC BY-SA 4.0; see
-[`../Dictionaries/cc-cedict/`](../Dictionaries/cc-cedict/).
+Nothing to do. CC-CEDICT ships with HanReader as a prepared database, ready
+the moment you launch it — no setup, no wait, no download.
+
+It is compiled when the app is *built* rather than when it is first run. The
+repository stores the dictionary as reviewable text, which takes a couple of
+seconds to parse; doing that on first launch would be a couple of seconds you
+spend staring at a progress bar, so the build does it once instead and the app
+opens the result in under a millisecond.
+
+It is licensed CC BY-SA; see
+[`../Dictionaries/cc-cedict/`](../Dictionaries/cc-cedict/) for the version and
+attribution.
 
 CC-CEDICT also does two jobs beyond English definitions, which is why HanReader
 keeps using it even if you prefer a different dictionary for glosses:
