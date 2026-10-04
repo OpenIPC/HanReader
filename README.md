@@ -101,7 +101,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M0** — license boundary and repository scaffolding
 - [x] **M1** — package skeleton, toolchain bootstrap, CI green on both platforms
 - [ ] **M2** — pinyin engine, CC-CEDICT parser, database and migrations
-- [ ] **M3** — dictionary pipeline and zero-setup first launch
+- [x] **M3** — dictionary pipeline and zero-setup first launch
 - [ ] **M4** — word segmentation and the line-breaking core
 - [ ] **M5** — **the macOS reader: first usable version**
 - [ ] **M6** — BKRS DSL import
