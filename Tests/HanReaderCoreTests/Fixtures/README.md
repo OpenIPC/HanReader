@@ -19,9 +19,9 @@ rather than hand-edited when the parser grows new cases.
 
 **Licensing.** This is CC-CEDICT data and carries the same terms as the bundled
 snapshot: Creative Commons Attribution-ShareAlike 4.0 International. See
-[`../../Dictionaries/cc-cedict/README.md`](../../Dictionaries/cc-cedict/README.md)
+[`../../../Dictionaries/cc-cedict/README.md`](../../../Dictionaries/cc-cedict/README.md)
 for the full attribution, and
-[`../../Dictionaries/cc-cedict/LICENSE`](../../Dictionaries/cc-cedict/LICENSE)
+[`../../../Dictionaries/cc-cedict/LICENSE`](../../../Dictionaries/cc-cedict/LICENSE)
 for the license text.
 
 Keep fixtures small — CI fails any file here over 256 KB. If a test needs more
