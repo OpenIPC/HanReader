@@ -11,7 +11,7 @@ public import HanReaderCore
 /// and Linux does not. `HanReaderCore` is compiled on Linux by a CI job to
 /// keep it portable, so the detection *policy* lives there and this conversion
 /// lives here.
-public struct SystemTextDecoder: TextDecoding {
+public nonisolated struct SystemTextDecoder: TextDecoding {
     public init() {}
 
     public func decode(_ data: Data, as encoding: SourceTextEncoding) -> String? {

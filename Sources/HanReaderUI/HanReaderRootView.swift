@@ -1,205 +1,210 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import HanReaderCore
+import HanReaderPlayback
 public import SwiftUI
+import UniformTypeIdentifiers
 
-/// The application's root view, shared by both targets.
+/// The app's databases, settings and synthesizer.
 ///
-/// At this point in M5 it hosts the reading surface over the built-in
-/// fixtures, with no library, no dictionary and no models of any kind. That is
-/// the sequencing the plan calls for, and it is not merely convenient: the
-/// hardest part of this app is the reading surface, and building it against
-/// values — with nothing observable in sight — is what forces the layout to
-/// take plain values rather than read a model. Discovering that requirement
-/// after the state exists means unpicking it from the layout.
+/// Held by the `App`, not by a view, and that distinction is the whole
+/// point. The predecessor prototype created its `AppModel` inside
+/// `ContentView`, which on macOS means **one per window**: two windows meant
+/// two database handles, two dictionary caches and two of everything else,
+/// each warming separately. An earlier draft of this file reintroduced
+/// exactly that by keeping the launch state in `@State` on the root view —
+/// a `WindowGroup` builds its content once per window.
 ///
-/// The library, the dictionary-backed detail panel, text import and speech
-/// replace the fixture wiring below in the following pull requests.
-public struct HanReaderRootView: View {
+/// So each platform's `@main` owns one of these and passes it down. Two
+/// lines of duplication across the two targets, against a shared mutable
+/// singleton or a bug that only appears when somebody opens a second window.
+@Observable
+@MainActor
+public final class HanReaderLaunch {
+    /// Internal: the app targets only ever construct this and hand it to
+    /// `HanReaderRootView`. Everything it holds is an implementation
+    /// detail of this module.
+    enum State {
+        case loading
+        case ready(AppServices, Settings, SpeechModel)
+        case failed(String)
+    }
+
+    private(set) var state: State = .loading
+
     public init() {}
 
+    /// Opens the databases. Safe to call repeatedly; only the first does
+    /// anything, because every window's root view calls it on appear.
+    func start() {
+        guard case .loading = state else { return }
+        do {
+            state = try .ready(AppServices.launch(), Settings(), SpeechModel())
+        } catch {
+            // Only a failure to open the *library* reaches here. A missing
+            // or unreadable dictionary is handled inside `AppServices` and
+            // degrades to a reader with no annotations, because refusing to
+            // launch would turn a degraded reader into no reader.
+            Log.error("launch", "could not open the library: \(error)")
+            state = .failed(error.localizedDescription)
+        }
+    }
+}
+
+/// The application's root view, shared by both targets.
+public struct HanReaderRootView: View {
+    private let launch: HanReaderLaunch
+    @State private var selection: TextID?
+
+    public init(launch: HanReaderLaunch) {
+        self.launch = launch
+    }
+
     public var body: some View {
-        // A navigation container even though nothing navigates yet. On macOS
-        // a `WindowGroup` supplies a window toolbar, so `.toolbar` works
-        // without one; on iOS it does not, and the reader's controls and
-        // title simply would not appear. The library arrives here in a later
-        // pull request and makes the stack load-bearing.
-        NavigationStack {
-            FixtureReader()
+        switch launch.state {
+        case .loading:
+            // Opening a prepared dictionary container takes about a
+            // millisecond, so there is nothing worth showing a spinner for.
+            Color.clear
+                .task { launch.start() }
+        case let .failed(message):
+            ContentUnavailableView(
+                "HanReader could not start",
+                systemImage: "exclamationmark.triangle",
+                description: Text(verbatim: message),
+            )
+        case let .ready(services, settings, speech):
+            LibraryAndReader(
+                services: services,
+                settings: settings,
+                speech: speech,
+                selection: $selection,
+            )
         }
     }
 }
 
-/// The reading surface over the built-in fixtures.
-///
-/// Scaffolding, and deliberately shaped like what replaces it: the selection
-/// and reveal state live here rather than in the views, the style is resolved
-/// once and passed down as a value, and every input the surface takes is
-/// already the input the real model will supply.
-struct FixtureReader: View {
-    @State private var fontSize = 22.0
-    @State private var spacing = WordSpacing.separated
-    @State private var selection: TokenID?
-    @State private var topBlock: Int?
+/// The library beside the reader.
+private struct LibraryAndReader: View {
+    let services: AppServices
+    let settings: Settings
+    let speech: SpeechModel
+    @Binding var selection: TextID?
 
-    /// Dynamic Type as a number.
+    @State private var library: LibraryModel
+    @State private var importer: TextImporter
+    @State private var isFileImporterPresented = false
+    @State private var duplicateNotice = false
+
+    /// Whichever failure is outstanding.
     ///
-    /// `@ScaledMetric` is the only way to read the user's text-size setting as
-    /// a ratio — `DynamicTypeSize` is an ordered enum with no numeric value,
-    /// and hard-coding a table of multipliers would drift from whatever the
-    /// system actually does. Scaling a round number and dividing gives the
-    /// real factor.
-    @ScaledMetric(relativeTo: .body) private var textScaleProbe = 100.0
-
-    /// Present and `.regular` on macOS, so this needs no platform branch.
-    @Environment(\.horizontalSizeClass) private var sizeClass
-
-    private var style: ReaderStyle {
-        ReaderStyle(
-            fontSize: fontSize,
-            spacing: spacing,
-            textScale: textScaleProbe / 100,
-            // Without this the 18pt compact floor exists only in its own
-            // tests. On an iPhone, 14pt scaled down by Dynamic Type's 0.9
-            // gives a 12.6pt glyph, and a tap target to match -- which is the
-            // one place the 44pt guarantee can be bought back, since a word's
-            // target is its text and cannot be padded without overlapping the
-            // word beside it.
-            minimumFontSize: sizeClass == .compact
-                ? ReaderStyle.compactFontSizeFloor
-                : ReaderStyle.fontSizeRange.lowerBound,
-        )
+    /// The library's errors were previously recorded and never shown, so a
+    /// library that failed to load looked like a library with nothing in it,
+    /// and a failed deletion looked like a deletion that had worked.
+    private var failure: String? {
+        importer.error ?? library.error?.localizedDescription
     }
 
-    private var document: SegmentedDocument {
-        ReaderFixtures.prose
+    private func clearFailure() {
+        importer.error = nil
+        library.clearError()
     }
 
-    /// Which words show their reading.
-    ///
-    /// Every occurrence of a revealed word, which is the prototype's default
-    /// behaviour and so what fidelity requires — but held as a set of *words*
-    /// with selection tracked separately. That separation is what makes
-    /// tapping a second instance of an already-revealed word select it
-    /// instead of appearing to do nothing.
-    @State private var reveal = RevealSet(mode: .allOccurrences)
+    init(
+        services: AppServices,
+        settings: Settings,
+        speech: SpeechModel,
+        selection: Binding<TextID?>,
+    ) {
+        self.services = services
+        self.settings = settings
+        self.speech = speech
+        _selection = selection
+        let library = LibraryModel(services: services)
+        _library = State(initialValue: library)
+        _importer = State(initialValue: TextImporter(library: library))
+    }
 
     var body: some View {
-        ReaderSurface(
-            document: document,
-            style: style,
-            readings: ReaderFixtures.readingsByWord,
-            selection: selection,
-            reveal: reveal,
-            onTap: select,
-            topBlock: $topBlock,
-        )
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            FixtureDetailPanel(token: selection.flatMap { document[$0] }, style: style)
-        }
-        .toolbar { controls }
-        .navigationTitle(Text(verbatim: "HanReader"))
-    }
-
-    @ToolbarContentBuilder
-    private var controls: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            Picker(selection: $spacing) {
-                Text("Separated words").tag(WordSpacing.separated)
-                Text("Continuous text").tag(WordSpacing.continuous)
-            } label: {
-                Text("Word spacing")
-            }
-            .pickerStyle(.segmented)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                fontSize = min(fontSize + 2, ReaderStyle.fontSizeRange.upperBound)
-            } label: {
-                Label("Larger text", systemImage: "textformat.size.larger")
-            }
-            // The "=" key, not "+". On most layouts `+` is the shifted `=`,
-            // so binding it means the advertised ⌘+ fires only as ⌘⇧+ while
-            // ⌘= -- which is what people actually press, and what every other
-            // Mac app accepts -- does nothing at all.
-            .keyboardShortcut("=", modifiers: .command)
-        }
-        ToolbarItem(placement: .primaryAction) {
-            Button {
-                fontSize = max(fontSize - 2, ReaderStyle.fontSizeRange.lowerBound)
-            } label: {
-                Label("Smaller text", systemImage: "textformat.size.smaller")
-            }
-            .keyboardShortcut("-", modifiers: .command)
-        }
-    }
-
-    /// Selects a token, and reveals every occurrence of its word.
-    ///
-    /// Tapping the *same* token again clears the selection and hides the word
-    /// again. Tapping a *different* instance of a word that is already
-    /// revealed moves the selection and leaves the reveal in place — the fix
-    /// for the prototype's single `Set<String>`, where any instance's tap
-    /// toggled every instance.
-    private func select(_ id: TokenID) {
-        guard let token = document[id] else { return }
-        if selection == id {
-            selection = nil
-            reveal.hide(token)
-        } else {
-            selection = id
-            reveal.reveal(token)
-        }
-    }
-}
-
-/// A placeholder for the word-detail panel.
-///
-/// Fixed height from the first version, because that is the property that
-/// matters and the one most easily lost later: a panel that grows to fit its
-/// content pushes the body text down every time a word with a longer
-/// definition is tapped. Definitions arrive once the dictionary is wired up;
-/// the geometry is settled now.
-struct FixtureDetailPanel: View {
-    let token: Token?
-    let style: ReaderStyle
-
-    @ScaledMetric private var height = ReaderMetrics.detailPanelHeight
-    @ScaledMetric private var headwordWidth = ReaderMetrics.detailHeadwordWidth
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            if let token {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: token.text)
-                        .font(ReaderFont.base(style))
-                    if let reading = ReaderFixtures.readingsByWord[token.text] {
-                        Text(verbatim: reading.display)
-                            .font(ReaderFont.ruby(style))
-                            .foregroundStyle(ReaderColor.ruby)
-                    }
-                }
-                .frame(width: headwordWidth, alignment: .leading)
-
-                Text("Definitions arrive with the dictionary in the next pull request.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        NavigationSplitView {
+            LibrarySidebar(
+                model: library,
+                selection: $selection,
+                onImport: { isFileImporterPresented = true },
+            )
+            .navigationSplitViewColumnWidth(
+                min: 200,
+                ideal: ReaderMetrics.sidebarWidth,
+                max: 360,
+            )
+        } detail: {
+            if let selection {
+                ReaderScreen(
+                    textID: selection,
+                    services: services,
+                    settings: settings,
+                    speech: speech,
+                )
             } else {
-                Text("Tap a word to see its reading.")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
+                ContentUnavailableView(
+                    "Choose a text",
+                    systemImage: "text.book.closed",
+                    description: Text("Or import one to start reading."),
+                )
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, ReaderMetrics.readingColumnPadding)
-        .padding(.vertical, 12)
-        .frame(height: height, alignment: .top)
-        .frame(maxWidth: .infinity)
-        .background(.bar)
+        .task { await library.load() }
+        // `.fileImporter` is identical on both platforms and handles the
+        // security-scoped URL itself, which is why there is no `NSOpenPanel`
+        // anywhere in this project and no platform branch here.
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [.plainText, .text, .utf8PlainText],
+        ) { result in
+            switch result {
+            case let .success(url):
+                Task { await importer.open(url) }
+            case let .failure(error):
+                importer.error = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { importer.pending != nil },
+            set: {
+                if !$0 {
+                    importer.cancel()
+                }
+            },
+        )) {
+            if let pending = importer.pending {
+                EncodingPicker(
+                    fileName: pending.fileName,
+                    previews: pending.previews,
+                    onPick: { encoding in Task { await importer.resolve(as: encoding) } },
+                    onCancel: { importer.cancel() },
+                )
+            }
+        }
+        .onChange(of: importer.imported) { _, imported in
+            guard let imported else { return }
+            selection = imported
+            importer.acknowledge()
+        }
+        .alert(
+            "This file could not be imported",
+            isPresented: Binding(
+                get: { importer.error != nil },
+                set: {
+                    if !$0 {
+                        importer.error = nil
+                    }
+                },
+            ),
+            presenting: importer.error,
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { message in
+            Text(verbatim: message)
+        }
     }
-}
-
-#Preview("Root view") {
-    HanReaderRootView()
-        .frame(width: 900, height: 600)
 }

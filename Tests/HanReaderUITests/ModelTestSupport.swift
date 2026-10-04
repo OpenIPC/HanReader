@@ -42,6 +42,26 @@ nonisolated enum ModelTestSupport {
         }
     }
 
+    /// Knows characters but no whole words, which is the shape that makes
+    /// the reader compose a reading — and the shape 77% of BKRS entries
+    /// have.
+    struct CharacterOnlyDictionary: DictionaryLookup {
+        func entries(for _: String) throws -> [DictionaryEntry] {
+            []
+        }
+
+        func readings(forCharacter character: Character) throws -> [CharacterReading] {
+            let numeric = ["北": "bei3", "京": "jing1"][String(character)]
+            guard let numeric else { return [] }
+            return [CharacterReading(
+                character: character,
+                numeric: numeric,
+                display: Pinyin.display(Pinyin.parse(numeric: numeric)),
+                rank: 0,
+            )]
+        }
+    }
+
     /// Counts database reads, so "looked up once" can be asserted rather
     /// than assumed.
     final class CountingDictionary: DictionaryLookup, @unchecked Sendable {

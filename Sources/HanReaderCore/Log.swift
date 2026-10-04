@@ -99,12 +99,10 @@ public enum Log {
 
 /// The one sink, at file scope.
 ///
-/// Deliberately not a `static` member of `Log`: a static would need
-/// `nonisolated(unsafe)`, and SwiftFormat and SwiftLint disagree about where
-/// that modifier goes relative to `private`, so the two tools would rewrite
-/// the line back and forth forever. A file-scope constant of a `Sendable`
-/// type needs no annotation at all — `HanReaderCore` has no default
-/// isolation, which is the whole reason it compiles on Linux.
+/// A file-scope constant of a `Sendable` type needs no isolation annotation
+/// at all, because `HanReaderCore` has no default isolation — which is the
+/// same property that lets it compile on Linux. As a `static` member it
+/// would need `nonisolated(unsafe)` for no benefit.
 private let box = SinkBox()
 
 /// Holds the current sink behind a lock.

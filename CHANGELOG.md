@@ -82,6 +82,15 @@ it needs to read like release notes rather than a commit log.
 - [Docs/fidelity.md](Docs/fidelity.md), which states behaviourally what
   "faithful to the prototype" means across two platforms, and names the test
   that enforces each part.
+- **The reader itself.** Import a Chinese `.txt`, tap a word to see its
+  pinyin above the text and its definition below, and hear it spoken. The
+  library remembers where you were in each text and which words you had
+  revealed.
+- Every sense of a tapped word in an expanded panel, rather than the first
+  one the database happened to return — 和 has eight entries and 了 has two
+  pronunciations.
+- Speech that says what it cannot do: if no Chinese voice is installed the
+  app reports it instead of silently doing nothing.
 - Pinyin for the words on the page, looked up whole where the dictionary
   knows a word and assembled character by character where it does not.
   Readings the dictionary could not settle — a word with several

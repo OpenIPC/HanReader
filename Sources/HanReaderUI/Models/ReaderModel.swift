@@ -16,6 +16,17 @@ struct WordDetail: Equatable, Sendable {
     let word: String
     let reading: TokenReading?
     let entries: [DictionaryEntry]
+
+    /// Whether the dictionary defines this word.
+    ///
+    /// A word can have a reading and no entry — composed from its
+    /// characters — which is why "not found" is a property of the result
+    /// rather than a state of its own. As a separate state it dropped the
+    /// reading on the floor: tapping a word the dictionary does not define
+    /// removed the pinyin that was already visible above it.
+    var isDefined: Bool {
+        !entries.isEmpty
+    }
 }
 
 /// What the detail surface should show.
@@ -28,7 +39,6 @@ enum DetailState: Equatable, Sendable {
     case empty
     case loading(String)
     case loaded(WordDetail)
-    case notFound(String)
 }
 
 /// One open text.
@@ -260,13 +270,15 @@ final class ReaderModel {
             // torn down; the state check covers a result arriving for a word
             // that is no longer the one being asked about.
             guard !Task.isCancelled, detail == .loading(word) else { return }
-            detail = entries.isEmpty
-                ? .notFound(word)
-                : .loaded(WordDetail(
-                    word: word,
-                    reading: readings[word] ?? ReadingComposer.reading(from: entries),
-                    entries: entries,
-                ))
+            detail = .loaded(WordDetail(
+                word: word,
+                // The reading already on screen, which for a word with no
+                // entry is the one composed from its characters. Falling
+                // back to the entries covers a word tapped before its
+                // reading was fetched.
+                reading: readings[word] ?? ReadingComposer.reading(from: entries),
+                entries: entries,
+            ))
         }
     }
 

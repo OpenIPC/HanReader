@@ -174,6 +174,13 @@ let package = Package(
         // that cannot live in HanReaderCore because Linux has no encoding
         // tables for them, so there is nothing here that could run anywhere
         // else.
+        // Apple-only by nature, like the platform tests: speech synthesis
+        // has no equivalent anywhere else.
+        .testTarget(
+            name: "HanReaderPlaybackTests",
+            dependencies: ["HanReaderPlayback"],
+            swiftSettings: mainActorSettings,
+        ),
         .testTarget(
             name: "HanReaderPlatformTests",
             dependencies: ["HanReaderPlatform"],
