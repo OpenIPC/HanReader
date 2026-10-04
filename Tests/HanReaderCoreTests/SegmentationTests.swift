@@ -266,3 +266,90 @@ struct DictionaryRepairTests {
         #expect(repaired == document)
     }
 }
+
+@Suite("Segmentation regressions")
+struct SegmentationRegressionTests {
+    /// The lexicon carries a weight that penalises length, and the first
+    /// version of the segmenter ignored it entirely — greedy longest-match
+    /// takes the long headword whatever its weight, so the documented
+    /// rationale was false and the weights were dead code.
+    ///
+    /// `日本人` is a real headword, but `日本` + `人` is the better reading
+    /// here when the shorter words carry more weight between them.
+    @Test("A long headword does not automatically beat two short ones")
+    func weightsAreConsulted() {
+        // Deliberately weighted so the pair outscores the single long word.
+        let lexicon = Lexicon([
+            Lexeme(word: "日本人", characterLength: 3, weight: 0.4),
+            Lexeme(word: "日本", characterLength: 2, weight: 0.9),
+            Lexeme(word: "人", characterLength: 1, weight: 0.9),
+        ])
+        let result = MaxMatchSegmenter(lexicon: lexicon).split("日本人")
+        #expect(result == ["日本", "人"], "greedy longest-match would give [日本人]")
+    }
+
+    /// ...and the converse, so the fix did not simply invert the bias.
+    @Test("A long headword still wins when it is the better reading")
+    func longWordStillWins() {
+        let lexicon = Lexicon([
+            Lexeme(word: "日本人", characterLength: 3, weight: 2.0),
+            Lexeme(word: "日本", characterLength: 2, weight: 0.5),
+            Lexeme(word: "人", characterLength: 1, weight: 0.5),
+        ])
+        #expect(MaxMatchSegmenter(lexicon: lexicon).split("日本人") == ["日本人"])
+    }
+
+    /// The repair pass had the same bug: it took the longest merge rather
+    /// than the best-weighted one.
+    @Test("Repair prefers the best-weighted merge, not the longest")
+    func repairConsultsWeights() {
+        let lexicon = Lexicon([
+            Lexeme(word: "日本人", characterLength: 3, weight: 0.2),
+            Lexeme(word: "日本", characterLength: 2, weight: 1.5),
+        ])
+        let split = TextSegmenter(words: CharacterSegmenter()).segment("日本人")
+        let repaired = DictionaryRepairPass(lexicon: lexicon).repair(split)
+        #expect(repaired.blocks.flatMap(\.tokens).map(\.text) == ["日本", "人"])
+    }
+
+    /// `trailingSpace` is public and documented, and was always false.
+    @Test("Tokens report whether whitespace follows them")
+    func trailingSpaceIsSet() {
+        let document = segmenterForRegressions().segment("中国 人民")
+        let tokens = document.blocks.flatMap(\.tokens)
+
+        guard let first = tokens.first(where: { $0.text == "中国" }),
+              let last = tokens.first(where: { $0.text == "人民" })
+        else { Issue.record("expected both words"); return }
+
+        #expect(first.trailingSpace, "中国 is followed by a space")
+        #expect(!last.trailingSpace, "人民 ends the text")
+        // The whitespace token itself is not followed by more whitespace.
+        #expect(tokens.first { $0.kind == .whitespace }?.trailingSpace == false)
+    }
+
+    /// Lookup was two linear scans, which on a book queried once per frame
+    /// during audio alignment is needless work.
+    @Test("Offset lookup is correct across a long document", .timeLimit(.minutes(1)))
+    func offsetLookupIsCorrect() {
+        let text = (0 ..< 400).map { _ in "中国人民学习。\n" }.joined()
+        let document = segmenterForRegressions().segment(text)
+
+        // Every offset must land in a token that actually contains it.
+        for offset in stride(from: 0, to: text.utf16.count, by: 7) {
+            guard let token = document.token(atOffset: offset) else {
+                Issue.record("no token at \(offset)"); return
+            }
+            #expect(token.range.contains(offset), "offset \(offset) outside its token")
+        }
+        // Past the end clamps rather than losing the position.
+        #expect(document.token(atOffset: text.utf16.count + 99) != nil)
+        #expect(document.token(atOffset: -1) == nil)
+    }
+}
+
+private func segmenterForRegressions() -> TextSegmenter<MaxMatchSegmenter> {
+    TextSegmenter(words: MaxMatchSegmenter(lexicon: Lexicon(words: [
+        "中国", "人民", "学习",
+    ])))
+}

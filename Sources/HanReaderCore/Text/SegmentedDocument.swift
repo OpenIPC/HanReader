@@ -127,11 +127,47 @@ public struct SegmentedDocument: Hashable, Sendable {
     /// the document after the text has been re-segmented — possibly by a
     /// different engine than the one that produced the offset.
     public func token(atOffset offset: Int) -> Token? {
-        guard let block = blocks.first(where: { $0.range.contains(offset) })
-            ?? blocks.last(where: { $0.range.lowerBound <= offset })
-        else { return nil }
-        return block.tokens.first { $0.range.contains(offset) }
-            ?? block.tokens.last { $0.range.lowerBound <= offset }
+        // Binary search, twice. Ranges are ordered and contiguous by
+        // construction -- that is exactly what `isWellFormed` asserts -- so a
+        // linear scan would be needless work on a book-length text queried
+        // once per frame during audio alignment.
+        guard let block = Self.search(blocks, offset: offset, range: \.range) else { return nil }
+        return Self.search(block.tokens, offset: offset, range: \.range)
+    }
+
+    /// The element whose range contains `offset`, or the last one starting at
+    /// or before it.
+    ///
+    /// Clamps rather than returning nil past the end: a stored reading
+    /// position may outlive an edit that shortened the text, and landing at
+    /// the end is much better than losing the position.
+    private static func search<Element>(
+        _ elements: [Element],
+        offset: Int,
+        range: (Element) -> Range<Int>,
+    )
+        -> Element?
+    {
+        guard !elements.isEmpty else { return nil }
+
+        var low = 0
+        var high = elements.count - 1
+        var candidate: Element?
+
+        while low <= high {
+            let middle = low + (high - low) / 2
+            let span = range(elements[middle])
+            if span.contains(offset) {
+                return elements[middle]
+            }
+            if span.lowerBound <= offset {
+                candidate = elements[middle]
+                low = middle + 1
+            } else {
+                high = middle - 1
+            }
+        }
+        return candidate
     }
 }
 

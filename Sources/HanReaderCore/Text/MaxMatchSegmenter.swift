@@ -51,7 +51,7 @@ public struct Lexicon: Sendable {
     }
 }
 
-/// Segments Han text by backward maximum matching over a lexicon.
+/// Segments Han text by choosing the highest-scoring sequence of words.
 ///
 /// Exists alongside the Apple tokenizer for three reasons, in order of weight:
 ///
@@ -65,9 +65,17 @@ public struct Lexicon: Sendable {
 ///    mismatch, where the tokenizer produced a token no dictionary defined and
 ///    the UI reported "not found" for what was really a segmentation error.
 ///
-/// **Backward** rather than forward matching: scanning from the right is
-/// empirically more accurate for Chinese, because modifiers precede heads, and
-/// it costs nothing extra.
+/// **Not** greedy longest-match. Greedy takes the longest dictionary word at
+/// each step, which is the characteristic failure of maximum-matching
+/// segmenters: a rare long headword overlapping two common short ones wins
+/// purely for being longer. The lexicon carries a weight per word that
+/// penalises length precisely to express that preference, so this maximises
+/// total weight over the whole run instead — a shortest-path problem, solved
+/// by dynamic programming in O(n · maxWordLength).
+///
+/// Ties are broken towards *fewer* words, so an exact dictionary match still
+/// beats an equally-weighted split, and then towards the earlier boundary, so
+/// the result is deterministic.
 public struct MaxMatchSegmenter: HanWordSegmenting {
     private let lexicon: Lexicon
 
@@ -79,35 +87,56 @@ public struct MaxMatchSegmenter: HanWordSegmenting {
         guard !lexicon.isEmpty else { return run.map(String.init) }
 
         let characters = Array(run)
-        guard !characters.isEmpty else { return [] }
+        let count = characters.count
+        guard count > 0 else { return [] }
 
-        var words: [String] = []
-        var end = characters.count
+        // Best score for the prefix ending at each position, and how long the
+        // word ending there was.
+        var score = [Double](repeating: -.infinity, count: count + 1)
+        var wordLength = [Int](repeating: 1, count: count + 1)
+        var wordCount = [Int](repeating: 0, count: count + 1)
+        score[0] = 0
 
-        while end > 0 {
+        for end in 1 ... count {
             let longest = min(lexicon.maximumLength, end)
-            var matched = false
+            for length in 1 ... longest {
+                let start = end - length
+                guard score[start] > -.infinity else { continue }
 
-            // Longest first, from the right.
-            for length in stride(from: longest, through: 2, by: -1) {
-                let candidate = String(characters[(end - length) ..< end])
-                if lexicon.contains(candidate) {
-                    words.append(candidate)
-                    end -= length
-                    matched = true
-                    break
+                let candidate = String(characters[start ..< end])
+                // A single character is always a legitimate word in Chinese,
+                // so it is always a candidate -- but it scores low enough that
+                // any real dictionary word beats it.
+                let weight = lexicon.weight(of: candidate)
+                    ?? (length == 1 ? Self.unknownCharacterWeight : nil)
+                guard let weight else { continue }
+
+                let total = score[start] + weight
+                let words = wordCount[start] + 1
+                let better = total > score[end]
+                    || (total == score[end] && words < wordCount[end])
+                if better {
+                    score[end] = total
+                    wordLength[end] = length
+                    wordCount[end] = words
                 }
-            }
-
-            if !matched {
-                // No multi-character match: take one character. A single
-                // character is always a legitimate word in Chinese, so this is
-                // a real fallback rather than a failure.
-                words.append(String(characters[end - 1]))
-                end -= 1
             }
         }
 
+        var words: [String] = []
+        var position = count
+        while position > 0 {
+            let length = wordLength[position]
+            words.append(String(characters[(position - length) ..< position]))
+            position -= length
+        }
         return words.reversed()
     }
+
+    /// Score for a character the lexicon does not know.
+    ///
+    /// Low but finite: a path through unknown characters must stay reachable,
+    /// or text outside the dictionary could not be segmented at all. Below
+    /// any real weight, so a dictionary word always wins.
+    static let unknownCharacterWeight = 0.0
 }

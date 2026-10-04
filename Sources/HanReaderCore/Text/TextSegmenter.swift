@@ -133,6 +133,29 @@ public struct TextSegmenter<WordSegmenter: HanWordSegmenting>: Tokenizing {
             offset += width
         }
 
+        // Marks tokens that are followed by whitespace.
+        //
+        // Done in a second pass, because a token does not know what follows
+        // it until the next one has been emitted. Leaving it always false --
+        // as the first version did -- made a documented piece of public API
+        // simply lie, even though reassembly still worked because whitespace
+        // is its own token.
+        func markTrailingSpaces() {
+            tokens = tokens.indices.map { index in
+                let token = tokens[index]
+                let followedBySpace = index + 1 < tokens.count
+                    && tokens[index + 1].kind == .whitespace
+                guard followedBySpace else { return token }
+                return Token(
+                    id: token.id,
+                    text: token.text,
+                    range: token.range,
+                    kind: token.kind,
+                    trailingSpace: true,
+                )
+            }
+        }
+
         for run in Self.runs(in: text) {
             switch run.kind {
             case .han:
@@ -153,6 +176,7 @@ public struct TextSegmenter<WordSegmenter: HanWordSegmenting>: Tokenizing {
                 }
             }
         }
+        markTrailingSpaces()
         return tokens
     }
 

@@ -98,6 +98,7 @@ public struct DictionaryRepairPass: Sendable {
 
         var combined = tokens[start].text
         var best = 1
+        var bestWeight = -Double.infinity
 
         for offset in 1 ..< limit {
             let next = tokens[start + offset]
@@ -110,7 +111,11 @@ public struct DictionaryRepairPass: Sendable {
 
             combined += next.text
             guard combined.count <= LexiconBuilder.maximumWordLength else { break }
-            if lexicon.contains(combined) {
+            // The best-weighted merge, not the longest. Preferring length
+            // would contradict the penalty the lexicon carries and reach for
+            // a rare long headword over a more plausible short one.
+            if let weight = lexicon.weight(of: combined), weight > bestWeight {
+                bestWeight = weight
                 best = offset + 1
             }
         }
