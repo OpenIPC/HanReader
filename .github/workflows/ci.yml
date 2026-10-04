@@ -466,12 +466,88 @@ jobs:
           [ "$version" = "$expected" ] \
             || { echo "::error::bundle version $version does not match HANREADER_VERSION $expected"; exit 1; }
 
+  dictionary:
+    # Compiles and checks the bundled dictionary. The failure this exists to
+    # catch is the quiet one: a parser or lexicon change that still produces a
+    # valid, openable database containing half the words. Everything builds,
+    # the app runs, and words simply stop being found -- nobody notices by eye.
+    name: Bundled dictionary
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select the pinned toolchain
+        run: |
+          set -euo pipefail
+          pinned=$(tr -d '[:space:]' < .xcode-version)
+          dir=""
+          for candidate in "/Applications/Xcode_${pinned}.app" "/Applications/Xcode_${pinned}".*.app; do
+            if [ -d "$candidate/Contents/Developer" ]; then dir="$candidate/Contents/Developer"; break; fi
+          done
+          if [ -z "$dir" ]; then
+            echo "::error file=.xcode-version::Xcode $pinned is not installed on this runner."
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none found)"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
+
+      - name: The pinned snapshot matches its recorded checksum
+        # Guards against the committed data being altered without SOURCE.json
+        # being updated to match -- which for CC BY-SA material would mean
+        # shipping data whose provenance we can no longer vouch for.
+        run: |
+          set -euo pipefail
+          source_file=Dictionaries/cc-cedict/cedict_ts.u8
+          record=Dictionaries/cc-cedict/SOURCE.json
+          if [ ! -f "$source_file" ]; then
+            echo "::notice::no pinned snapshot yet; skipping"
+            exit 0
+          fi
+          [ -f "$record" ] || { echo "::error file=$record::missing"; exit 1; }
+
+          recorded=$(python3 -c "import json;print(json.load(open('$record'))['sha256'])")
+          actual=$(shasum -a 256 "$source_file" | cut -d' ' -f1)
+          if [ "$recorded" != "$actual" ]; then
+            echo "::error file=$source_file::checksum does not match SOURCE.json"
+            echo "  recorded: $recorded"
+            echo "  actual:   $actual"
+            exit 1
+          fi
+
+          # The licence recorded must be the one the data declares. A pinned
+          # snapshot and an attribution naming different terms is a false
+          # licensing statement.
+          declared=$(grep -m1 '^#! license=' "$source_file" | cut -d= -f2- | tr -d '\r')
+          recorded_licence=$(python3 -c "import json;print(json.load(open('$record'))['license'])")
+          if [ "$declared" != "$recorded_licence" ]; then
+            echo "::error file=$record::license disagrees with the data"
+            echo "  data says:   $declared"
+            echo "  record says: $recorded_licence"
+            exit 1
+          fi
+          echo "snapshot verified: $actual"
+          echo "licence:           $declared"
+
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: dict-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+
+      - name: Compile and verify
+        run: |
+          set -euo pipefail
+          if [ ! -f Dictionaries/cc-cedict/cedict_ts.u8 ]; then
+            echo "::notice::no pinned snapshot yet; skipping compilation"
+            exit 0
+          fi
+          make dict
+
   required-checks:
     # The single required status check for branch protection. Adding or renaming
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene, lint, spm-test, architecture, app-build]
+    needs: [hygiene, lint, spm-test, architecture, app-build, dictionary]
     if: always()
     steps:
       - name: Verify all required jobs succeeded

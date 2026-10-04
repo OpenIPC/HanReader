@@ -123,7 +123,7 @@ HanReader imports dictionaries; it does not redistribute them.
 
 **Code: [MIT](LICENSE).**
 
-**Bundled dictionary data: CC BY-SA 4.0.** CC-CEDICT lives in
+**Bundled dictionary data: CC BY-SA.** CC-CEDICT lives in
 [`Dictionaries/cc-cedict/`](Dictionaries/cc-cedict/) under its own license, and
 a dictionary database generated from it is an adaptation that carries CC BY-SA
 too — not MIT.
