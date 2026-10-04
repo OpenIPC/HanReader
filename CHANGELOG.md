@@ -16,5 +16,11 @@ it needs to read like release notes rather than a commit log.
 - Initial repository scaffolding: license boundary between the MIT-licensed
   source and the CC BY-SA 4.0 bundled dictionary data, contribution guide,
   security policy, and editor/VCS configuration.
+- SwiftPM package defining the nine-target module graph, with the architecture's
+  boundaries enforced by the build: `HanReaderCore` imports only Foundation and
+  is compiled on Linux in CI to prove it, and `InternalImportsByDefault` makes a
+  leaked database type a compile error.
+- `hanreader-dictgen` command-line target, which will compile dictionaries into
+  the distributable container.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main

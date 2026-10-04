@@ -13,9 +13,9 @@ concurrency:
 permissions:
   contents: read
 
-# The Swift build, test, lint and dictionary jobs arrive with the package
-# skeleton in milestone M1. Until then `hygiene` is the whole suite -- the point
-# of running it now is that CI which was never green is CI nobody trusts.
+# The lint, application-build and dictionary jobs arrive later in milestone M1
+# and in M3. `spm-test` is the fast lane where most of the suite will live, and
+# `linux-core` is what actually enforces the architecture -- see its comment.
 
 jobs:
   hygiene:
@@ -143,12 +143,69 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  spm-test:
+    # The fast lane: no simulator, no Xcode project, no XcodeGen. Most of the
+    # test suite will live here, and this is the job that should fail first when
+    # logic breaks.
+    name: Swift package tests
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Confirm the pinned toolchain is the one we got
+        # The macos-26 image carries exactly one Xcode major, so DEVELOPER_DIR
+        # is deterministic -- but GitHub replaces patch releases in place, so
+        # fail with a readable message rather than a strange compile error.
+        run: |
+          set -euo pipefail
+          expected=$(tr -d '[:space:]' < .xcode-version 2>/dev/null || echo "")
+          xcodebuild -version
+          swift --version
+          if [ -n "$expected" ]; then
+            actual=$(xcodebuild -version | head -1 | awk '{print $2}')
+            case "$actual" in
+              "$expected"*) ;;
+              *) echo "::warning::Xcode $actual present, .xcode-version pins $expected" ;;
+            esac
+          fi
+
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build, treating warnings as errors
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+
+      - name: Test
+        run: swift test --skip-build
+
+  linux-core:
+    # This job is the architecture. HanReaderCore must import nothing but
+    # Foundation, and "no AppKit" is far too weak a rule to express that --
+    # NaturalLanguage and AVFoundation are every bit as Apple-only. Compiling
+    # the target on Linux is a check that cannot be argued with.
+    name: Core builds on Linux
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build HanReaderCore in isolation
+        run: swift build --target HanReaderCore -Xswiftc -warnings-as-errors
+
   required-checks:
     # The single required status check for branch protection. Adding or renaming
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene]
+    needs: [hygiene, spm-test, linux-core]
     if: always()
     steps:
       - name: Verify all required jobs succeeded
