@@ -1,0 +1,48 @@
+# ── Generated Xcode project ───────────────────────────────────────────────
+# The project is generated from project.yml by XcodeGen and is NOT committed.
+# Run `make generate` (or `make open`) to produce it.
+HanReader.xcodeproj/
+*.xcworkspace/
+
+# ── Xcode ─────────────────────────────────────────────────────────────────
+xcuserdata/
+DerivedData/
+build/
+*.xcarchive
+*.ipa
+*.app
+*.dSYM
+*.dSYM.zip
+TestResults*.xcresult/
+
+# ── SwiftPM ───────────────────────────────────────────────────────────────
+.build/
+.swiftpm/
+# NOTE: Package.resolved IS committed, for reproducible dependency resolution.
+
+# ── Pinned developer tooling (fetched by Scripts/bootstrap.sh) ────────────
+.tools/
+
+# ── Per-contributor local build settings (signing team, bundle prefix) ────
+Apps/Shared/Config/Local.xcconfig
+
+# ── Build products of the dictionary pipeline ─────────────────────────────
+Resources/Generated/*
+!Resources/Generated/.gitkeep
+*.hanreaderdict
+
+# ── Dictionary source data ────────────────────────────────────────────────
+# Never commit BKRS: it is large and not ours to redistribute.
+# The negations below are load-bearing -- without them a blanket ignore would
+# silently exclude the pinned CC-CEDICT snapshot and the test fixtures.
+*.dsl
+*.dsl.dz
+*.u8
+*.u8.gz
+!Dictionaries/cc-cedict/cedict_ts.u8
+!Tests/Fixtures/**/*.dsl
+!Tests/Fixtures/**/*.u8
+!Tests/Fixtures/**/*.dsl.txt
+
+# ── macOS ─────────────────────────────────────────────────────────────────
+.DS_Store

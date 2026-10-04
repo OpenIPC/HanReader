@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest something HanReader should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Scope note, so nobody wastes their time
+
+        HanReader 1.x is deliberately scoped to being a **reader**. The feature
+        set is frozen at: library import, tap-to-reveal pinyin and definitions,
+        text-to-speech, per-text audio playback, the two spacing modes, font
+        size, and reading progress.
+
+        That means the following are **out of scope for 1.x**, however reasonable
+        they are:
+
+        - Spaced repetition, flashcards, or a review queue
+        - Known-word or vocabulary tracking
+        - HSK level colouring or grading
+        - Anki or CSV export
+        - EPUB or PDF import
+        - Handwriting, stroke order, or character animation
+        - Translation of whole sentences
+
+        Several of those are genuinely good ideas and may happen after 1.0. Open
+        a [Discussion](https://github.com/OpenIPC/HanReader/discussions) for them
+        rather than an issue — we would rather talk it through than leave a
+        request sitting open for a year.
+
+        Bug fixes, correctness and performance improvements, accessibility work,
+        new dictionary formats, and localization are always in scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you running into?
+      description: Describe the situation rather than the solution — it often leads somewhere better.
+      placeholder: |
+        When I read a long chapter, I lose track of …
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope-ack
+    attributes:
+      label: Scope
+      options:
+        - label: I have read the scope note above and believe this is in scope for 1.x.
+          required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you have tried, or other tools that do this well?

@@ -1,0 +1,13 @@
+# Default owner for everything.
+*                       @widgetii
+
+# Licensing and provenance. These paths decide what this project is allowed to
+# redistribute, so they get an explicit owner and cannot be merged unreviewed.
+/LICENSE                @widgetii
+/NOTICE                 @widgetii
+/THIRD-PARTY-NOTICES.md @widgetii
+/Dictionaries/          @widgetii
+
+# CI and release automation hold the keys to anything we ever publish.
+/.github/workflows/     @widgetii
+/Scripts/               @widgetii

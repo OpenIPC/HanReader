@@ -1,0 +1,92 @@
+name: Dictionary or word problem
+description: A word looks wrong — bad definition, missing entry, wrong pinyin, or split incorrectly.
+labels: ["dictionary"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Please check which kind of problem this is first
+
+        Word problems split into two very different causes, and the fix lives in
+        different places:
+
+        - **The definition itself is wrong, or the word is missing from the
+          dictionary.** That is upstream data, not HanReader. Please report it to
+          [CC-CEDICT](https://www.mdbg.net/chinese/dictionary?page=cc-cedict) (for
+          English) or [БКРС](https://bkrs.info/) (for Russian). We cannot fix
+          dictionary content — we only ship a reader for it.
+
+        - **HanReader split the word in the wrong place, showed the wrong
+          reading for a word that has several, failed to find an entry that is
+          definitely in the dictionary, or rendered it strangely.** That is ours.
+          Please file it here.
+
+        The dropdown below is how we route it, so please be honest about which
+        you think it is — "not sure" is a perfectly good answer.
+
+  - type: input
+    id: word
+    attributes:
+      label: The word or phrase
+      placeholder: "一个人"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - Segmentation — the word was split or joined incorrectly
+        - Pinyin — wrong reading shown for a word with multiple readings
+        - Lookup — no entry found, but the word is in the dictionary
+        - Rendering — the entry displays strangely or is cut off
+        - Definition content — the gloss itself is wrong (likely upstream)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: The sentence it appeared in
+      description: |
+        Segmentation depends entirely on surrounding context, so a bare word is
+        often not reproducible. Please include the whole sentence.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what did you get?
+      placeholder: |
+        Expected: 一个人 as one word
+        Got: 一 | 个 | 人 as three
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dictionary
+    attributes:
+      label: Which dictionaries are installed?
+      multiple: true
+      options:
+        - Bundled CC-CEDICT
+        - Imported BKRS / 大БКРС (DSL)
+        - Imported compiled .hanreaderdict
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - iPadOS
+        - iOS (iPhone)
+    validations:
+      required: true

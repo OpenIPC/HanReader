@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Swift package dependencies. No-ops until Package.swift lands in M1.
+  - package-ecosystem: swift
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "build"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"

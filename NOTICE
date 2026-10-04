@@ -1,0 +1,10 @@
+HanReader
+Copyright (c) 2026 OpenIPC and HanReader contributors
+
+This product includes third-party material. See THIRD-PARTY-NOTICES.md for the
+complete list of components, their licenses, and the attribution statements
+those licenses require.
+
+In particular, HanReader bundles CC-CEDICT, a Chinese-English dictionary
+licensed under Creative Commons Attribution-ShareAlike 4.0 International.
+See Dictionaries/cc-cedict/ for the data, its license, and its attribution.

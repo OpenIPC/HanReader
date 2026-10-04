@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/OpenIPC/HanReader/discussions
+    about: Ask a question, share a text that reads badly, or float an idea before filing an issue.
+  - name: Wrong or missing definition
+    url: https://www.mdbg.net/chinese/dictionary?page=cc-cedict
+    about: Definition content comes from CC-CEDICT upstream. If a gloss is wrong, report it there — but if a word is split oddly, that is ours, so use the dictionary issue template.
+  - name: Security vulnerability
+    url: https://github.com/OpenIPC/HanReader/security/advisories/new
+    about: Please report security issues privately rather than as a public issue.
+  - name: OpenIPC community
+    url: https://openipc.org/
+    about: General OpenIPC project channels.

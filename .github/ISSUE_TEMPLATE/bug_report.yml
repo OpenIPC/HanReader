@@ -1,0 +1,99 @@
+name: Bug report
+description: Something behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a report. The dropdowns below are what actually make a
+        bug reproducible for us, so please do fill them in.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what occurred instead.
+      placeholder: |
+        I tapped a word in the middle of a paragraph and …
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Import the attached text
+        2. Tap 的 in the second paragraph
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - iPadOS
+        - iOS (iPhone)
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.2 / iOS 18.3"
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: HanReader version and build
+      description: From the About window, or the commit SHA if you built from source.
+      placeholder: "1.0.0 (42), or commit a1b2c3d"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - Built from source
+        - Downloaded release
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dictionary
+    attributes:
+      label: Which dictionaries are installed?
+      description: Several bugs only appear with a particular dictionary, or with more than one installed.
+      multiple: true
+      options:
+        - Bundled CC-CEDICT
+        - Imported BKRS / 大БКРС (DSL)
+        - Imported compiled .hanreaderdict
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: sample
+    attributes:
+      label: Sample text (optional)
+      description: |
+        If the bug depends on specific text, paste a short excerpt. For
+        segmentation or rendering bugs this is usually the single most useful
+        thing you can give us.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, a screen recording, or console output.

@@ -1,0 +1,21 @@
+* text=auto eol=lf
+
+# ── Dictionary data is vendored third-party material, not our code ────────
+# linguist-vendored keeps it out of GitHub's language statistics and makes the
+# MIT/CC BY-SA boundary visible at a glance.
+Dictionaries/** linguist-vendored
+Dictionaries/cc-cedict/cedict_ts.u8 -text -diff
+
+# ── Generated / vendored files ────────────────────────────────────────────
+*.pbxproj linguist-generated=true -diff
+*.xcassets linguist-vendored
+
+# ── Test fixtures are byte-exact; never normalize them ────────────────────
+# DSL fixtures are authored as UTF-8 .dsl.txt and re-encoded to UTF-16LE at
+# runtime, so they stay diffable. The genuinely binary ones must not be touched.
+Tests/Fixtures/**/*.dsl binary
+Tests/Fixtures/**/*.u8 -text -diff
+Tests/Fixtures/**/*.dsl.txt text eol=lf
+
+# ── Keep CRLF where a format demands it ───────────────────────────────────
+*.bat text eol=crlf
