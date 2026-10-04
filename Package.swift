@@ -144,9 +144,10 @@ let package = Package(
         .testTarget(
             name: "HanReaderCoreTests",
             dependencies: ["HanReaderCore"],
-            // Real CC-CEDICT data, a small slice extracted by
-            // Scripts/extract-cedict-fixture.py so its provenance is
-            // documented and it can be regenerated rather than hand-edited.
+            // Small slices of the real CC-CEDICT and 大БКРС data, each
+            // extracted by a committed script (Scripts/extract-cedict-fixture.py
+            // and Scripts/extract-dsl-fixture.py) so their provenance is
+            // documented and they can be regenerated rather than hand-edited.
             //
             // Kept inside the target directory rather than at Tests/Fixtures:
             // a resource path reaching outside the target works on the current
