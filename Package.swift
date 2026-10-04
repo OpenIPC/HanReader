@@ -144,6 +144,10 @@ let package = Package(
         .testTarget(
             name: "HanReaderCoreTests",
             dependencies: ["HanReaderCore"],
+            // Real CC-CEDICT data, a small slice extracted by
+            // Scripts/extract-cedict-fixture.py so its provenance is
+            // documented and it can be regenerated rather than hand-edited.
+            resources: [.copy("../Fixtures")],
             swiftSettings: baseSettings,
         ),
         .testTarget(
