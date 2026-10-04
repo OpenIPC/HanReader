@@ -27,6 +27,15 @@ final class LibraryModel {
 
     private(set) var items: [LibraryItem] = []
     private(set) var isLoading = false
+
+    /// Which load is the current one.
+    ///
+    /// A load can overlap an import or a delete — both of which reload — and
+    /// the awaits make the finishing order independent of the starting one.
+    /// Without this, an older snapshot resuming last puts the list back to
+    /// how it was before the import, and whichever load finishes first turns
+    /// the spinner off while the other is still running.
+    private var loadGeneration = 0
     /// The most recent failure, for the UI to surface and dismiss.
     var error: (any Error)?
 
@@ -35,11 +44,20 @@ final class LibraryModel {
     }
 
     func load() async {
+        loadGeneration += 1
+        let generation = loadGeneration
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if generation == loadGeneration {
+                isLoading = false
+            }
+        }
         do {
-            items = try await services.library.items()
+            let loaded = try await services.library.items()
+            guard generation == loadGeneration else { return }
+            items = loaded
         } catch {
+            guard generation == loadGeneration else { return }
             Log.error("library", "could not read the library: \(error)")
             self.error = error
         }

@@ -60,16 +60,24 @@ final class AppServices: Sendable {
     }
 
     /// Everything in memory, for tests and previews.
+    /// - Parameter dictionaryCapacity: pass 0 to turn the lookup cache off,
+    ///   so that a test counting database queries sees every one of them
+    ///   rather than only the first.
     static func inMemory(
         lookup: some DictionaryLookup = EmptyDictionary(),
         lexicon: Lexicon = Lexicon(words: []),
+        dictionaryCapacity: Int = 4096,
     ) throws
         -> AppServices
     {
         let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         return try AppServices(
             library: LibraryRepository.inMemory(audioDirectory: root),
-            dictionary: DictionaryService(lookup: lookup),
+            dictionary: DictionaryService(
+                lookup: lookup,
+                capacity: dictionaryCapacity,
+                entryCapacity: dictionaryCapacity,
+            ),
             segmenter: DocumentSegmenter(tokenizer: TextSegmenter.system(), lexicon: lexicon),
             locations: AppDatabase.Locations(
                 library: root.appendingPathComponent("library.sqlite"),

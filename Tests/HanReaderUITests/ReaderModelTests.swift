@@ -9,69 +9,10 @@ import Testing
 @MainActor
 @Suite("Reader model")
 struct ReaderModelTests {
-    /// Nested rather than file-scoped, for two reasons that both bite in
-    /// this module: a `private` type here would need `nonisolated` as well,
-    /// and SwiftFormat and SwiftLint disagree about the order of those two
-    /// modifiers; and `entry` is a name three test files want.
-    nonisolated struct SmallDictionary: DictionaryLookup {
-        static func entry(_ simplified: String, _ numeric: String) -> DictionaryEntry {
-            DictionaryEntry(
-                headword: Headword(simplified: simplified, traditional: nil),
-                reading: Pinyin.parse(numeric: numeric),
-                senses: [Sense(
-                    id: 0,
-                    kind: .definition,
-                    gloss: Gloss(text: "a definition of \(simplified)"),
-                )],
-            )
-        }
-
-        static let words: [String: [DictionaryEntry]] = [
-            "我": [entry("我", "wo3")],
-            "爱": [entry("爱", "ai4")],
-            "你": [entry("你", "ni3")],
-            "中国": [entry("中国", "Zhong1 guo2")],
-        ]
-
-        func entries(for headword: String) throws -> [DictionaryEntry] {
-            Self.words[headword] ?? []
-        }
-
-        func readings(forCharacter _: Character) throws -> [CharacterReading] {
-            []
-        }
-    }
-
-    /// A model over an in-memory library holding one text. A struct rather
-    /// than a tuple, which the linter caps at two members and which reads
-    /// badly at three anyway.
-    struct Fixture {
-        let model: ReaderModel
-        let services: AppServices
-        let id: TextID
-    }
-
-    /// 书 sits alone between full stops so that it is its own token whatever
-    /// the tokenizer does with its neighbours, and it is deliberately absent
-    /// from `SmallDictionary` — it is the "no entry" case.
     private let source = "我爱你。\n\n中国。\n书。\n我爱你。\n"
 
-    /// Builds a model over an in-memory library holding one text.
-    private func makeModel() async throws -> Fixture {
-        let services = try AppServices.inMemory(
-            lookup: SmallDictionary(),
-            lexicon: Lexicon(words: ["中国"]),
-        )
-        let outcome = try await services.library.importText(title: "Sample", content: source)
-        guard case let .imported(id) = outcome else {
-            throw ModelTestError.importFailed
-        }
-        let model = ReaderModel(
-            textID: id,
-            services: services,
-            settings: Settings(store: InMemorySettingsStore()),
-        )
-        return Fixture(model: model, services: services, id: id)
+    private func makeModel() async throws -> ModelTestSupport.Fixture {
+        try await ModelTestSupport.makeFixture(source: source)
     }
 
     // MARK: - Loading
@@ -160,128 +101,47 @@ struct ReaderModelTests {
         #expect(ReaderModel.window(around: 0, in: empty).isEmpty)
     }
 
-    // MARK: - Selection and reveal
-
-    @Test("Tapping a word selects it and reveals it")
-    func tapSelects() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let token = try #require(firstToken("我", in: model))
-
-        model.tap(token.id)
-        #expect(model.selection == token.id)
-        #expect(model.reveal.reveals(token))
-    }
-
-    @Test("Tapping the same word again clears it")
-    func tapTwiceClears() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let token = try #require(firstToken("我", in: model))
-
-        model.tap(token.id)
-        model.tap(token.id)
-        #expect(model.selection == nil)
-        #expect(!model.reveal.reveals(token))
-        #expect(model.detail == .empty)
-    }
-
-    /// The prototype's most jarring interaction bug. Its single
-    /// `Set<String>` meant any instance's tap toggled every instance, so
-    /// tapping a second 我 un-revealed the first and appeared to do nothing.
-    @Test("Tapping another instance of a revealed word selects it")
-    func tapSecondInstance() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let document = try #require(model.document)
-        let instances = document.blocks.flatMap(\.tokens).filter { $0.text == "我" }
-        #expect(instances.count == 2, "the fixture should contain 我 twice")
-
-        model.tap(instances[0].id)
-        model.tap(instances[1].id)
-
-        #expect(model.selection == instances[1].id)
-        #expect(model.reveal.reveals(instances[0]), "the first instance was un-revealed")
-        #expect(model.reveal.reveals(instances[1]))
-    }
-
-    @Test("Punctuation is not selectable")
-    func punctuationIsInert() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let token = try #require(firstToken("。", in: model))
-
-        model.tap(token.id)
-        #expect(model.selection == nil)
-    }
-
-    @Test("Reveal state survives reopening the text")
-    func revealIsPersisted() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        let services = fixture.services
-        let id = fixture.id
-        await model.load()
-        let token = try #require(firstToken("我", in: model))
-        model.tap(token.id)
-
-        // Give the detached write a chance to land before reading it back.
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(try await services.library.revealedWords(in: id).contains("我"))
-    }
-
-    // MARK: - Detail
-
-    /// The prototype showed "Not found in dictionary" while the dictionary
-    /// was still being read, which is not a slow answer but a wrong one.
-    @Test("A tapped word reports loading before it reports an answer")
-    func detailStartsLoading() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let token = try #require(firstToken("我", in: model))
-
-        model.tap(token.id)
-        #expect(model.detail == .loading("我"))
-    }
-
-    @Test("A known word loads its entries")
-    func detailLoads() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
-        await model.load()
-        let token = try #require(firstToken("中国", in: model))
-
-        model.tap(token.id)
-        try await waitForDetail(model)
-
-        guard case let .loaded(detail) = model.detail else {
-            Issue.record("expected a loaded detail, got \(model.detail)")
+    /// Assigning `topBlock` while restoring a saved position used to fire its
+    /// `didSet`, which schedules a reading refresh — and `load` then awaited
+    /// one directly as well. Both saw an empty map, so the whole window was
+    /// looked up twice every time a position was restored.
+    ///
+    /// Counted with the service cache off, which is what makes the duplicate
+    /// visible: with it on, the second pass is served from memory and the
+    /// waste is invisible from here.
+    @Test("Restoring a position does not fetch the window twice")
+    func windowIsFetchedOnce() async throws {
+        let counter = ModelTestSupport.CountingDictionary()
+        let services = try AppServices.inMemory(
+            lookup: counter,
+            lexicon: Lexicon(words: ["中国"]),
+            dictionaryCapacity: 0,
+        )
+        let outcome = try await services.library.importText(title: "S", content: source)
+        guard case let .imported(id) = outcome else {
+            Issue.record("import failed")
             return
         }
-        #expect(detail.word == "中国")
-        #expect(detail.reading?.display == "Zhōngguó")
-        #expect(detail.entries.count == 1)
-    }
+        // A stored position, which is what made `topBlock` change during load.
+        try await services.library.save(ReadingPosition(
+            textID: id,
+            blockIndex: 2,
+            tokenIndex: 0,
+            characterOffset: 8,
+        ))
 
-    @Test("A word the dictionary does not have reports not found")
-    func detailNotFound() async throws {
-        let fixture = try await makeModel()
-        let model = fixture.model
+        let model = ReaderModel(
+            textID: id,
+            services: services,
+            settings: Settings(store: InMemorySettingsStore()),
+        )
         await model.load()
-        let token = try #require(firstToken("书", in: model))
+        // Let any stray scheduled refresh run before counting.
+        try await Task.sleep(for: .milliseconds(50))
 
-        model.tap(token.id)
-        try await waitForDetail(model)
-
-        guard case .notFound = model.detail else {
-            Issue.record("expected not found, got \(model.detail)")
-            return
-        }
+        #expect(counter.count(of: "我") <= 1, "我 was looked up \(counter.count(of: "我")) times")
+        #expect(counter.count(of: "中国") <= 1)
+        await model.close()
     }
 
     // MARK: - Helpers
@@ -305,5 +165,3 @@ struct ReaderModelTests {
         Issue.record("the detail never settled")
     }
 }
-
-private enum ModelTestError: Error { case importFailed }

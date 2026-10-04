@@ -66,7 +66,13 @@ final class ReaderModel {
     /// The block at the top of the viewport, bound to the scroll position.
     var topBlock: Int? {
         didSet {
-            guard topBlock != oldValue else { return }
+            // Only once the text is open. Restoring a saved position assigns
+            // this during `load`, and without the phase check that assignment
+            // schedules a reading refresh for a window `load` is about to
+            // fetch anyway -- both seeing an empty `readings` map, so the
+            // whole window is looked up twice every time a position is
+            // restored. It would also save the position it had just read.
+            guard topBlock != oldValue, phase == .ready else { return }
             scheduleReadingRefresh()
             schedulePositionSave()
         }
@@ -76,6 +82,7 @@ final class ReaderModel {
     private var positionSaveTask: Task<Void, Never>?
     private var readingTask: Task<Void, Never>?
     private var detailTask: Task<Void, Never>?
+    private let revealWrites = SerialTaskQueue()
 
     init(textID: TextID, services: AppServices, settings: Settings) {
         self.textID = textID
@@ -94,24 +101,28 @@ final class ReaderModel {
                 return
             }
 
-            // Off the main actor. The prototype segmented on it, so opening a
-            // long document stalled the window until it finished. Both the
-            // segmenter and the result are `Sendable`, which is what lets the
-            // whole job move rather than being chunked around the main thread.
-            let segmenter = services.segmenter
-            let segmented = await Task.detached(priority: .userInitiated) {
-                segmenter.segment(content)
-            }.value
-            try Task.checkCancellation()
+            // Off the main actor, but *structured*. A `nonisolated async`
+            // function runs on the generic executor rather than the caller's
+            // actor, which is what moves the work -- and unlike
+            // `Task.detached` it stays part of this task tree, so cancelling
+            // the load cancels it rather than orphaning it.
+            //
+            // Honest about the limit: the segmentation pass itself is one
+            // synchronous call and nothing can interrupt it part-way.
+            // Cancellation is observed either side of it. Making the pass
+            // itself interruptible belongs to the segmenter, and would mean
+            // deciding what a half-segmented document is -- which, given the
+            // tiling invariant, is nothing.
+            let segmented = try await Self.segment(content, with: services.segmenter)
 
             document = segmented
             reveal = try await RevealSet(
                 mode: settings.revealMode,
                 lemmas: services.library.revealedWords(in: textID),
             )
-            let stored = try await services.library.position(of: textID)
-            restoredAudioTime = stored?.audioTime
-            topBlock = Self.restoredBlock(from: stored, in: segmented)
+            let position = try await services.library.position(of: textID)
+            restoredAudioTime = position?.audioTime
+            topBlock = Self.restoredBlock(from: position, in: segmented)
             phase = .ready
 
             await refreshReadings()
@@ -123,6 +134,23 @@ final class ReaderModel {
             Log.error("reader", "could not open text \(textID.rawValue): \(error)")
             phase = .failed(error.localizedDescription)
         }
+    }
+
+    /// Segments off the main actor.
+    ///
+    /// `nonisolated` is what does the work here: this module defaults to
+    /// `MainActor`, and a `nonisolated async` function hops to the generic
+    /// executor instead of inheriting the caller's actor.
+    nonisolated static func segment(
+        _ content: String,
+        with segmenter: DocumentSegmenter,
+    ) async throws
+        -> SegmentedDocument
+    {
+        try Task.checkCancellation()
+        let document = segmenter.segment(content)
+        try Task.checkCancellation()
+        return document
     }
 
     /// Where to scroll to when a text is reopened.
@@ -201,9 +229,8 @@ final class ReaderModel {
     func tap(_ id: TokenID) {
         guard let token = document?[id], token.isLookupCandidate else { return }
         if selection == id {
-            selection = nil
+            clearSelection()
             reveal.hide(token)
-            detail = .empty
             persistReveal(of: token.text, revealed: false)
         } else {
             selection = id
@@ -214,6 +241,12 @@ final class ReaderModel {
     }
 
     func clearSelection() {
+        // Cancelled, not merely overwritten. A lookup already in flight would
+        // otherwise finish, pass its own cancellation check and write
+        // `.loaded` -- leaving a definition on screen for a word that is no
+        // longer selected.
+        detailTask?.cancel()
+        detailTask = nil
         selection = nil
         detail = .empty
     }
@@ -223,7 +256,10 @@ final class ReaderModel {
         detail = .loading(word)
         detailTask = Task {
             let entries = await services.dictionary.entries(for: word)
-            guard !Task.isCancelled else { return }
+            // Both checks are needed. Cancellation covers the task being
+            // torn down; the state check covers a result arriving for a word
+            // that is no longer the one being asked about.
+            guard !Task.isCancelled, detail == .loading(word) else { return }
             detail = entries.isEmpty
                 ? .notFound(word)
                 : .loaded(WordDetail(
@@ -234,10 +270,26 @@ final class ReaderModel {
         }
     }
 
+    /// Remembers a reveal across launches.
+    ///
+    /// Only in `.allOccurrences` mode, because that is the only thing the
+    /// store can express: `revealedWord` is keyed on `(text, word)`, so there
+    /// is nowhere to record *which* 的 was revealed. Writing a lemma for a
+    /// per-instance tap would be worse than not writing it — reopening would
+    /// light up every occurrence of a word the reader revealed exactly once,
+    /// and switching modes would expose the lot. Per-instance reveals are
+    /// therefore session-only, which is noted in the setting's own
+    /// documentation rather than discovered.
+    ///
+    /// Writes are chained rather than fired independently. Two taps on the
+    /// same word produce a reveal and a hide, and unordered they can land in
+    /// either order — leaving the store saying "revealed" after a tap that
+    /// hid it.
     private func persistReveal(of word: String, revealed: Bool) {
+        guard reveal.mode == .allOccurrences else { return }
         let library = services.library
         let id = textID
-        Task {
+        revealWrites.submit {
             do {
                 if revealed {
                     try await library.reveal(word, in: id)
@@ -307,5 +359,30 @@ final class ReaderModel {
     /// resume from. The prototype lost this on every relaunch.
     var storedAudioTime: Double? {
         restoredAudioTime
+    }
+
+    // MARK: - Teardown
+
+    /// Stops everything in flight and writes the position.
+    ///
+    /// Called when the reader closes a text. `.task(id:)` cancels its own
+    /// task when the view goes away, but the unstructured tasks held here —
+    /// the debounced position save, the reading window, the detail lookup,
+    /// the reveal write — have no such relationship and would otherwise
+    /// outlive the model that owns them.
+    ///
+    /// Flushing is not optional either: the position save is debounced, so
+    /// there is almost always one in flight, and losing it is the difference
+    /// between reopening where you left off and reopening a page earlier.
+    func close() async {
+        readingTask?.cancel()
+        detailTask?.cancel()
+        readingTask = nil
+        detailTask = nil
+        await flushPosition()
+        // Awaited rather than cancelled: these are the last writes of the
+        // session and the whole point of chaining them was that they land in
+        // order. Cancelling here would drop the final tap.
+        await revealWrites.drain()
     }
 }

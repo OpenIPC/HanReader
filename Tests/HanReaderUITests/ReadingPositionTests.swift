@@ -13,24 +13,8 @@ import Testing
 struct ReadingPositionTests {
     private let source = "我爱你。\n\n中国。\n书。\n我爱你。\n"
 
-    private func makeModel() async throws -> ReaderModelTests.Fixture {
-        let services = try AppServices.inMemory(
-            lookup: ReaderModelTests.SmallDictionary(),
-            lexicon: Lexicon(words: ["中国"]),
-        )
-        let outcome = try await services.library.importText(title: "Sample", content: source)
-        guard case let .imported(id) = outcome else {
-            throw PositionTestError.importFailed
-        }
-        return ReaderModelTests.Fixture(
-            model: ReaderModel(
-                textID: id,
-                services: services,
-                settings: Settings(store: InMemorySettingsStore()),
-            ),
-            services: services,
-            id: id,
-        )
+    private func makeModel() async throws -> ModelTestSupport.Fixture {
+        try await ModelTestSupport.makeFixture(source: source)
     }
 
     // MARK: - Position
@@ -122,5 +106,3 @@ struct ReadingPositionTests {
         #expect(try await services.library.position(of: id)?.audioTime == 42)
     }
 }
-
-private enum PositionTestError: Error { case importFailed }
