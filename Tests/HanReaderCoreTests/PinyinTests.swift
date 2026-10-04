@@ -316,3 +316,50 @@ struct SyllabifierTests {
         #expect(fromBKRS?.map(\.numeric).joined(separator: " ") == "ni3 hao3")
     }
 }
+
+@Suite("Pinyin regressions")
+struct PinyinRegressionTests {
+    /// A Unicode numeral whose value exceeds 255 must not trap the parser.
+    /// `wholeNumberValue` is not bounded by the ASCII digits.
+    @Test("Large Unicode numerals are kept as literals, not crashed on")
+    func largeNumeral() {
+        #expect(Pinyin.parse(numeric: "ha1\u{4E07}") == [.literal("ha1\u{4E07}")]) // 万 = 10000
+        #expect(Pinyin.parse(numeric: "x\u{0D70}") == [.literal("x\u{0D70}")]) // Malayalam 100
+    }
+
+    /// A syllable following a literal needs a separator, or two letter names
+    /// run into the reading after them.
+    @Test("Letter names stay separate from a following syllable")
+    func literalThenSyllable() {
+        #expect(Pinyin.display(Pinyin.parse(numeric: "A A zhi4")) == "A A zhì")
+    }
+
+    /// `chang` ends in `ng`, so `cháng` + `ān` needs the apostrophe just as
+    /// `Xī` + `ān` does.
+    @Test("An ng ending still takes an apostrophe")
+    func ngBoundary() {
+        #expect(Pinyin.display(Pinyin.parse(numeric: "Chang2 an1")) == "Cháng'ān")
+        #expect(Pinyin.display(Pinyin.parse(numeric: "Xi1 an1")) == "Xī'ān")
+    }
+
+    /// A comma attached to the preceding syllable must not swallow it.
+    @Test("Attached separators are split off", arguments: [
+        "ha1, ha1",
+        "ha1 , ha1",
+        "ha1,ha1",
+    ])
+    func attachedComma(field: String) {
+        let rendered = Pinyin.display(Pinyin.parse(numeric: field))
+        #expect(rendered == "hā, hā", "field \(field) rendered as \(rendered)")
+    }
+
+    /// Pathological input must not take exponential time. A long run of
+    /// ambiguous prefixes followed by an unmatchable character is the shape
+    /// that blows up an unmemoised search.
+    @Test("Unsegmentable ambiguous input terminates quickly", .timeLimit(.minutes(1)))
+    func noExponentialBlowup() {
+        let bases: Set = ["a", "aa", "aaa", "aaaa", "aaaaa", "aaaaaa"]
+        let text = String(repeating: "a", count: 40) + "z"
+        #expect(PinyinSyllabifier.syllables(fromDiacritic: text, bases: bases) == nil)
+    }
+}

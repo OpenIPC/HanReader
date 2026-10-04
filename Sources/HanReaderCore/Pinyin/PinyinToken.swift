@@ -42,7 +42,35 @@ public enum Pinyin {
     ///     parse(numeric: "Bei3 jing1") // capitals preserved
     ///     parse(numeric: "xx5")        // [unknown]
     public static func parse(numeric field: String) -> [PinyinToken] {
-        field.split(separator: " ", omittingEmptySubsequences: true).map(token(for:))
+        field
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .flatMap(splittingSeparators(from:))
+            .map(token(for:))
+    }
+
+    /// Splits `,` and `·` off a piece so they are recognised whether or not
+    /// they are spaced.
+    ///
+    /// CC-CEDICT is not consistent about this -- both `ha1 , ha1` and
+    /// `ha1, ha1` occur. Treating a separator as a token only when it stands
+    /// alone leaves `ha1,` as literal text, so the syllable never gets
+    /// converted and renders as `ha1,` beside a properly rendered neighbour.
+    private static func splittingSeparators(from piece: Substring) -> [Substring] {
+        guard piece.contains(",") || piece.contains("·") else { return [piece] }
+
+        var pieces: [Substring] = []
+        var current = piece.startIndex
+        for index in piece.indices where piece[index] == "," || piece[index] == "·" {
+            if current < index {
+                pieces.append(piece[current ..< index])
+            }
+            pieces.append(piece[index ... index])
+            current = piece.index(after: index)
+        }
+        if current < piece.endIndex {
+            pieces.append(piece[current...])
+        }
+        return pieces
     }
 
     private static func token(for piece: Substring) -> PinyinToken {
@@ -54,7 +82,12 @@ public enum Pinyin {
         }
 
         // A syllable is letters (with `:` for ü) followed by a single digit.
-        if let last = piece.last, let digit = last.wholeNumberValue,
+        // The value is range-checked *before* narrowing: a field ending in a
+        // Unicode numeral such as 万 has a wholeNumberValue of 10000, and
+        // UInt8(_:) traps on it rather than falling through to a literal.
+        if let last = piece.last,
+           let digit = last.wholeNumberValue,
+           (1 ... 5).contains(digit),
            let tone = Tone(rawValue: UInt8(digit))
         {
             let base = piece.dropLast()
@@ -86,6 +119,11 @@ public enum Pinyin {
                     } else if needsApostrophe(after: previous, before: syllable) {
                         out += "'"
                     }
+                } else if !out.isEmpty, !out.hasSuffix(" ") {
+                    // Follows a literal or an unknown rather than a syllable.
+                    // Without this the letter names in `A A zhi4` run into the
+                    // reading after them, giving `A Azhì`.
+                    out += " "
                 }
                 out += rendered(syllable, style: style)
                 previousSyllable = syllable
@@ -139,7 +177,10 @@ public enum Pinyin {
         guard let first = next.base.lowercased().first, "aeo".contains(first) else { return false }
         let tail = previous.base.lowercased()
         guard let last = tail.last else { return false }
-        return "aeiouü".contains(last) || last == "n"
+        // `ng` must be tested explicitly: it ends in `g`, so checking only the
+        // final character silently omits it and `Chang2 an1` joins as
+        // `chángān` instead of `Cháng'ān`.
+        return "aeiouü".contains(last) || tail.hasSuffix("n") || tail.hasSuffix("ng")
     }
 }
 

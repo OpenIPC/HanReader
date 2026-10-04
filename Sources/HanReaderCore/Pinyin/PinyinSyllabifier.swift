@@ -88,27 +88,54 @@ public enum PinyinSyllabifier {
         return result.isEmpty ? nil : result
     }
 
-    /// Longest-match-first segmentation with backtracking.
+    /// Longest-match-first segmentation with backtracking, memoised by
+    /// starting position.
+    ///
+    /// Without memoisation this is exponential: a run with many valid prefix
+    /// splits and an unmatchable tail re-explores the same suffixes once per
+    /// path. `aaaa…az` against bases `a`, `aa`, `aaa`… is the degenerate
+    /// shape, and 40 characters of it is already intractable. Each starting
+    /// index is now resolved at most once, which makes the search linear in
+    /// the number of positions times the (bounded) prefix length.
+    ///
+    /// Indices are passed rather than sliced arrays, so no copying happens per
+    /// branch either.
     private static func segment(
         _ characters: [Character],
         bases: Set<String>,
     )
         -> [PinyinSyllable]?
     {
-        guard !characters.isEmpty else { return [] }
+        // nil = not yet attempted; .some(nil) = attempted and failed.
+        var memo = [Int: [PinyinSyllable]?](minimumCapacity: characters.count + 1)
 
-        // The longest pinyin base is six characters (`chuang`, `shuang`), so
-        // there is no point attempting longer prefixes.
-        let maximum = min(6, characters.count)
-        for length in stride(from: maximum, through: 1, by: -1) {
-            let candidate = String(characters[0 ..< length])
-            guard let syllable = syllable(fromDiacritic: candidate),
-                  bases.contains(syllable.base.lowercased())
-            else { continue }
+        func solve(from start: Int) -> [PinyinSyllable]? {
+            if start == characters.count {
+                return []
+            }
+            if let cached = memo[start] {
+                return cached
+            }
 
-            guard let rest = segment(Array(characters[length...]), bases: bases) else { continue }
-            return [syllable] + rest
+            // The longest pinyin base is six characters (`chuang`, `shuang`),
+            // so longer prefixes cannot match.
+            let maximum = min(6, characters.count - start)
+            for length in stride(from: maximum, through: 1, by: -1) {
+                let candidate = String(characters[start ..< (start + length)])
+                guard let syllable = syllable(fromDiacritic: candidate),
+                      bases.contains(syllable.base.lowercased())
+                else { continue }
+
+                if let rest = solve(from: start + length) {
+                    let result = [syllable] + rest
+                    memo[start] = result
+                    return result
+                }
+            }
+            memo[start] = .some(nil)
+            return nil
         }
-        return nil
+
+        return solve(from: 0)
     }
 }
