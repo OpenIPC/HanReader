@@ -83,26 +83,6 @@ public enum DSLToken: Hashable, Sendable {
     case close(DSLTagKind)
 }
 
-/// Something the lexer could not make sense of, reported rather than hidden.
-public struct DSLDiagnostic: Hashable, Sendable {
-    public enum Kind: Hashable, Sendable {
-        /// A bracketed span whose name is not in `DSLTagKind`.
-        case unknownTag(String)
-        /// A `[` with no matching `]` before the end of the line.
-        case unterminatedTag
-    }
-
-    public let kind: Kind
-    /// The text as it appeared, which is also what was emitted. Nothing is
-    /// dropped on the way to a diagnostic.
-    public let text: String
-
-    public init(kind: Kind, text: String) {
-        self.kind = kind
-        self.text = text
-    }
-}
-
 /// Splits a line of DSL body text into text and markup.
 ///
 /// ### Escapes are handled before tags, and that ordering is the whole thing
