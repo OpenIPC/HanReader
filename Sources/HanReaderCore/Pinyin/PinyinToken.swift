@@ -132,7 +132,11 @@ public enum Pinyin {
                 if !out.isEmpty, !out.hasSuffix(" ") {
                     out += " "
                 }
-                out += "?"
+                // Numeric style is the cross-dictionary merge key, so it must
+                // round-trip to CC-CEDICT's own spelling. Rendering `?` there
+                // would collapse every unknown reading onto a single key and
+                // let unrelated entries merge.
+                out += style == .numeric ? "xx5" : "?"
                 previousSyllable = nil
             }
         }

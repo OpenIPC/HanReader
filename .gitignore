@@ -40,9 +40,9 @@ Resources/Generated/*
 *.u8
 *.u8.gz
 !Dictionaries/cc-cedict/cedict_ts.u8
-!Tests/Fixtures/**/*.dsl
-!Tests/Fixtures/**/*.u8
-!Tests/Fixtures/**/*.dsl.txt
+!Tests/**/Fixtures/**/*.dsl
+!Tests/**/Fixtures/**/*.u8
+!Tests/**/Fixtures/**/*.dsl.txt
 
 # ── CI scratch ─────────────────────────────────────────────────────────────
 .toolchain-id

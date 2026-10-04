@@ -82,9 +82,9 @@ jobs:
           set -euo pipefail
           bad=$(git ls-files \
             | grep -E '\.(dsl|dsl\.dz|hanreaderdict)$|(^|/)dabkrs' \
-            | grep -v '^Tests/Fixtures/' || true)
+            | grep -v '/Fixtures/' || true)
           if [ -n "$bad" ]; then
-            echo "::error::dictionary data must not be committed outside Tests/Fixtures/:"
+            echo "::error::dictionary data must not be committed outside a Tests/**/Fixtures/ directory:"
             echo "$bad"
             exit 1
           fi
@@ -92,13 +92,11 @@ jobs:
       - name: Committed test fixtures stay small
         run: |
           set -euo pipefail
-          if [ -d Tests/Fixtures ]; then
-            big=$(find Tests/Fixtures -type f -size +256k)
-            if [ -n "$big" ]; then
-              echo "::error::fixtures over 256 KB -- commit a smaller slice plus its extraction script:"
-              echo "$big"
-              exit 1
-            fi
+          big=$(find Tests -type d -name Fixtures -exec find {} -type f -size +256k \; 2>/dev/null)
+          if [ -n "$big" ]; then
+            echo "::error::fixtures over 256 KB -- commit a smaller slice plus its extraction script:"
+            echo "$big"
+            exit 1
           fi
 
       - name: App version matches HanReaderCore.version

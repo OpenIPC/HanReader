@@ -304,3 +304,51 @@ struct CEDICTMalformedTests {
         #expect(commentsOnly.metadata["key"] == "value")
     }
 }
+
+@Suite("CC-CEDICT regressions")
+struct CEDICTRegressionTests {
+    /// Blank lines must not shift diagnostics. Dropping them made every
+    /// reported line number after a blank one point at the wrong line.
+    @Test("Diagnostics survive blank lines with the right line number")
+    func blankLinesDoNotShiftLineNumbers() {
+        let text = "你好 你好 [ni3 hao3] /hello/\r\n\r\n\r\nbroken line\r\n"
+        let parsed = CEDICTParser.parse(text)
+        #expect(parsed.entries.count == 1)
+        #expect(parsed.diagnostics.map(\.line) == [4])
+    }
+
+    /// `xx5` is the merge key for an unknown reading. Rendering it as `?`
+    /// collapsed every unknown onto one key, which would let unrelated
+    /// entries merge once several dictionaries are installed.
+    @Test("An unknown reading keeps its key but still displays as ?")
+    func unknownReadingKey() {
+        let tokens = Pinyin.parse(numeric: "xx5")
+        #expect(Pinyin.display(tokens, style: .numeric) == "xx5")
+        #expect(Pinyin.display(tokens, style: .diacritic) == "?")
+
+        let entry = Fixture.parsed.entries.first { $0.reading.contains(.unknown) }
+        #expect(entry?.readingKey == "xx5")
+    }
+
+    /// A headword containing CJK punctuation is one reference, not two. The
+    /// scan used to stop at the comma and resume mid-phrase, recording only
+    /// the tail and linking to the wrong entry.
+    @Test("A reference containing CJK punctuation is captured whole")
+    func punctuatedReference() {
+        let line = "一不做，二不休 一不做，二不休 [yi1 bu4 zuo4 , er4 bu4 xiu1] "
+            + "/see 一不做，二不休[yi1 bu4 zuo4 , er4 bu4 xiu1]/\r\n"
+        let gloss = CEDICTParser.parse(line).entries[0].senses[0].gloss
+        #expect(gloss.references.map(\.simplified) == ["一不做，二不休"])
+        #expect(gloss.text == "see 一不做，二不休")
+    }
+
+    /// ...but ASCII punctuation and spaces separate words in ordinary prose,
+    /// so a scan must not run across them and swallow a whole phrase.
+    @Test("ASCII punctuation still ends a reference scan")
+    func asciiPunctuationStopsScan() {
+        let line = "甲 甲 [jia3] /see 甲[jia3], and also 乙[yi3]/\r\n"
+        let gloss = CEDICTParser.parse(line).entries[0].senses[0].gloss
+        #expect(gloss.references.map(\.simplified) == ["甲", "乙"])
+        #expect(gloss.text == "see 甲, and also 乙")
+    }
+}

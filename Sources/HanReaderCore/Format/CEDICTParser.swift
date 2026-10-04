@@ -64,7 +64,12 @@ public enum CEDICTParser {
         // as one unparseable line. `isNewline` matches the CRLF grapheme, bare
         // LF, bare CR and the Unicode line separators alike, and leaves no
         // carriage return behind to strip.
-        let lines = text.split(whereSeparator: \.isNewline)
+        //
+        // Empty subsequences are KEPT so that the enumeration index is the
+        // real file line number. Dropping them makes every diagnostic after a
+        // blank line point at an earlier line than the one that is actually
+        // wrong, which is worse than no line number at all.
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         for (index, line) in lines.enumerated() {
             guard !line.isEmpty else { continue }
 
@@ -252,7 +257,29 @@ public enum CEDICTParser {
     private static func isReferenceCharacter(_ character: Character) -> Bool {
         character.isHan || character.isNumber
             || (character.isLetter && character.isASCII)
+            || headwordPunctuation.contains(character)
     }
+
+    /// Punctuation that occurs *inside* a headword and so must not end a
+    /// reference scan.
+    ///
+    /// `一不做，二不休[yi1 bu4 zuo4 , er4 bu4 xiu1]` is one headword; stopping
+    /// at the comma made the scan resume later in the same annotated phrase
+    /// and record only `二不休`, linking to the wrong entry.
+    ///
+    /// Only fullwidth CJK forms are listed. ASCII punctuation and spaces
+    /// separate words in ordinary gloss prose, so accepting those would let a
+    /// scan run across `see 甲, and also 乙[yi3]` and swallow the whole phrase.
+    private static let headwordPunctuation: Set<Character> = [
+        "\u{FF0C}", // ，fullwidth comma
+        "\u{3001}", // 、ideographic comma
+        "\u{00B7}", // · middle dot
+        "\u{2014}", // — em dash
+        "\u{FF1A}", // ：fullwidth colon
+        "\u{FF01}", // ！
+        "\u{FF1F}", // ？
+        "\u{3002}", // 。
+    ]
 
     /// Classifies a sense by the phrases CC-CEDICT uses to introduce one.
     private static func kind(of text: Substring) -> SenseKind {

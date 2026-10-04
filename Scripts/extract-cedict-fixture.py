@@ -8,7 +8,7 @@ slice can be regenerated rather than hand-maintained.
 
     ./Scripts/extract-cedict-fixture.py path/to/cedict_ts.u8
 
-Writes Tests/Fixtures/cedict-sample.u8.
+Writes Tests/HanReaderCoreTests/Fixtures/cedict-sample.u8.
 
 The data is CC BY-SA 4.0. See Dictionaries/cc-cedict/README.md for attribution;
 the fixture carries the same terms as the bundled snapshot.
@@ -64,7 +64,7 @@ def main() -> int:
 
     source = pathlib.Path(sys.argv[1])
     repo = pathlib.Path(__file__).resolve().parent.parent
-    out_path = repo / "Tests" / "Fixtures" / "cedict-sample.u8"
+    out_path = repo / "Tests" / "HanReaderCoreTests" / "Fixtures" / "cedict-sample.u8"
 
     lines = source.read_text(encoding="utf-8").split("\n")
 
@@ -134,15 +134,31 @@ def main() -> int:
         if specials["bracket_xref"] is None and "|" in defs and "[" in defs:
             specials["bracket_xref"] = line
 
+    problems: list[str] = []
+
     for key, line in specials.items():
         if line is None:
-            print(f"warning: no entry found for {key}", file=sys.stderr)
+            problems.append(f"no entry found for special case {key!r}")
         elif line not in picked:
             picked.append(line)
 
     missing = sorted(set(WANTED) - seen)
     if missing:
-        print(f"warning: headwords not found: {missing}", file=sys.stderr)
+        problems.append(f"requested headwords not found: {missing}")
+
+    # Fail rather than warn. A fixture exists to protect specific cases, so a
+    # regeneration that silently drops some of them is worse than no
+    # regeneration -- the tests would still pass while no longer testing what
+    # they claim to.
+    if problems:
+        for problem in problems:
+            print(f"error: {problem}", file=sys.stderr)
+        print(
+            "refusing to write an incomplete fixture; "
+            "check the source file or update WANTED",
+            file=sys.stderr,
+        )
+        return 1
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     body = "\r\n".join(header + sorted(picked)) + "\r\n"

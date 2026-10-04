@@ -147,7 +147,12 @@ let package = Package(
             // Real CC-CEDICT data, a small slice extracted by
             // Scripts/extract-cedict-fixture.py so its provenance is
             // documented and it can be regenerated rather than hand-edited.
-            resources: [.copy("../Fixtures")],
+            //
+            // Kept inside the target directory rather than at Tests/Fixtures:
+            // a resource path reaching outside the target works on the current
+            // toolchain but is not something SwiftPM documents as supported,
+            // and sharing one fixture across targets is not worth that bet.
+            resources: [.copy("Fixtures")],
             swiftSettings: baseSettings,
         ),
         .testTarget(
