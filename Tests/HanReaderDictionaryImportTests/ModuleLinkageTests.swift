@@ -2,7 +2,6 @@
 
 import HanReaderCore
 import Testing
-
 @testable import HanReaderDictionaryImport
 
 @Suite("Dictionary import module")

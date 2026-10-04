@@ -2,7 +2,6 @@
 
 import HanReaderCore
 import Testing
-
 @testable import HanReaderPersistence
 
 @Suite("Persistence module")

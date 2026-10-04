@@ -1,0 +1,23 @@
+# Pinned developer tooling.
+#
+# Scripts/bootstrap.sh reads this file, downloads each archive, verifies its
+# SHA-256 before extracting anything, and installs into .tools/ (gitignored).
+# No Homebrew, no Mint, no source builds, and no trust in whatever version a
+# contributor happens to have on their PATH.
+#
+# Checksums were taken from the GitHub release asset digests AND verified by
+# independent download. To bump a tool, change its version and checksum
+# together; bootstrap.sh refuses to run a binary whose hash does not match.
+#
+# Format, whitespace-separated:
+#   name  version  layout  url  sha256
+#
+# layout is how the archive is shaped, which differs per project:
+#   flat  - binary sits at the archive root; extract just that binary
+#   tree  - archive contains a directory that must be kept intact, because the
+#           binary resolves resources relative to itself (XcodeGen needs
+#           share/xcodegen/SettingPresets as a sibling of bin/)
+
+xcodegen 2.46.0 tree https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+swiftlint 0.65.1 flat https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0
+swiftformat 0.63.1 flat https://github.com/nicklockwood/SwiftFormat/releases/download/0.63.1/swiftformat.zip 385ef1a263ba28685157b98c5536b9c9105e124518f28b7ef8a2bee4b167eaeb

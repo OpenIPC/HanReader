@@ -52,8 +52,14 @@ Without it, `make run-ios` fails with an opaque "Unable to find a destination"
 error. You can skip this if you only intend to work on macOS.
 
 You do **not** need Homebrew, an Apple Developer account, or any other tool.
-`make bootstrap` downloads XcodeGen, SwiftLint, and SwiftFormat as pinned,
-SHA-256-verified prebuilt binaries into `.tools/`.
+`make bootstrap` downloads XcodeGen 2.46.0, SwiftLint 0.65.1 and SwiftFormat
+0.63.1 as pinned, SHA-256-verified prebuilt binaries into `.tools/`. The
+checksums live in `Scripts/tools.lock`, and bootstrap verifies each archive
+*before* extracting it — so a tampered download never reaches disk, let alone
+runs. To bump a tool, change its version and checksum together.
+
+`make doctor` reports your toolchain, how it compares to the version CI uses,
+and whether an iOS simulator runtime is installed.
 
 ---
 
@@ -185,6 +191,10 @@ content.**
 
 - Branch from `main`. Keep PRs focused.
 - Run `make format` and `make test-all` before pushing.
+- Formatting is owned by SwiftFormat and linting by SwiftLint, and they are
+  configured not to contradict each other. If you find a case where `make
+  format` produces something `make lint` rejects, that is a bug in our config
+  rather than something to work around — please report it.
 - Update the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) for any
   user-visible change.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)

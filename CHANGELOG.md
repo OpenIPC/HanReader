@@ -22,5 +22,13 @@ it needs to read like release notes rather than a commit log.
   leaked database type a compile error.
 - `hanreader-dictgen` command-line target, which will compile dictionaries into
   the distributable container.
+- Developer tooling that bootstraps itself: `make run` fetches pinned,
+  checksum-verified copies of XcodeGen, SwiftLint and SwiftFormat into
+  `.tools/`, so a clone builds with nothing installed but Xcode. Run `make` for
+  the target list, or `make doctor` for an environment report.
+- SwiftLint rules that enforce the module boundaries at edit time, including
+  bans on AppKit outside the platform shim, `NaturalLanguage` outside the
+  tokenization module, database imports outside persistence, and hard-coded
+  design values in views.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main

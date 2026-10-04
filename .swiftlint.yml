@@ -1,0 +1,176 @@
+# SwiftLint configuration. Pinned to 0.65.1 via Scripts/tools.lock.
+
+strict: true
+
+included:
+  - Sources
+  - Tests
+  - Apps
+
+excluded:
+  - .build
+  - .tools
+  - Resources/Generated
+  - Tests/Fixtures
+  - Dictionaries
+
+opt_in_rules:
+  - array_init
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - explicit_init
+  - fallthrough
+  - first_where
+  - flatmap_over_map_reduce
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - last_where
+  - legacy_multiple
+  - literal_expression_end_indentation
+  - modifier_order
+  - multiline_arguments
+  - multiline_parameters
+  - operator_usage_whitespace
+  - overridden_super_call
+  - prefer_self_in_static_references
+  - prefer_zero_over_explicit_init
+  - redundant_nil_coalescing
+  - redundant_type_annotation
+  - sorted_first_last
+  - toggle_bool
+  - unavailable_function
+  - unneeded_parentheses_in_closure_argument
+  - unowned_variable_capture
+  - yoda_condition
+
+analyzer_rules:
+  - unused_import
+  - unused_declaration
+
+disabled_rules:
+  - todo # tracked in issues, not blocked in CI
+  # SwiftFormat owns comma style via `--trailingcommas always`. With this rule
+  # enabled the two tools contradict each other: `make format` adds the commas
+  # and `make lint` then rejects them.
+  - trailing_comma
+
+line_length:
+  warning: 100
+  error: 140
+  ignores_comments: false
+  ignores_urls: true
+
+type_body_length:
+  warning: 250
+  error: 400
+
+file_length:
+  warning: 400
+  error: 600
+  ignore_comment_only_lines: true
+
+function_body_length:
+  warning: 50
+  error: 100
+
+cyclomatic_complexity:
+  warning: 10
+  error: 20
+
+identifier_name:
+  excluded: [id, db, x, y, i, j, to, up]
+
+nesting:
+  type_level: 2
+
+# ── Architecture, enforced as lint errors ──────────────────────────────────
+#
+# These are the module boundaries from Docs/ARCHITECTURE.md. CI also checks the
+# Core boundary by compiling it on Linux and by reading the package manifest;
+# these rules catch the same mistakes at edit time, with a message that says
+# where the code belongs instead of just failing a build.
+custom_rules:
+  no_appkit_outside_platform:
+    name: "AppKit/UIKit outside HanReaderPlatform"
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport|HanReaderPlayback)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(AppKit|UIKit|Cocoa)\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "AppKit/UIKit belongs in HanReaderPlatform only."
+    severity: error
+
+  no_naturallanguage_outside_tokenization:
+    name: "NaturalLanguage outside HanReaderTokenization"
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderDictionaryImport|HanReaderPlayback|HanReaderPlatform)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?NaturalLanguage\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "NaturalLanguage belongs in HanReaderTokenization; go through HanReaderCore.Tokenizing."
+    severity: error
+
+  no_database_outside_persistence:
+    name: "Database access outside HanReaderPersistence"
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderTokenization|HanReaderPlayback|HanReaderPlatform|HanReaderDictionaryImport|hanreader-dictgen)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(GRDB|SQLite3)\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Database access goes through HanReaderPersistence, including from the modules built on top of it."
+    severity: error
+
+  no_swiftui_outside_ui:
+    name: "SwiftUI in a non-UI module"
+    included: ".*/Sources/(HanReaderCore|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport|HanReaderPlayback)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?(SwiftUI|Combine)\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "SwiftUI belongs in HanReaderUI (or HanReaderPlatform for genuine platform bridging)."
+    severity: error
+
+  no_print:
+    name: "print() instead of a logger"
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderTokenization|HanReaderDictionaryImport|HanReaderPlayback|HanReaderPlatform)/.*\\.swift"
+    regex: '\bprint\s*\('
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Use the logger in HanReaderCore. The prototype's seven print() calls were its entire error handling."
+    severity: error
+
+  # ── Design tokens ───────────────────────────────────────────────────────
+  # The prototype scattered values like panelHeight = 88, width: 110 and
+  # fontSize * 0.48 across its views, recomputing some of them inside every
+  # body. A convention nobody can violate beats a style guide nobody reads.
+  no_raw_font_size:
+    name: "Hard-coded font size"
+    included: ".*/Sources/HanReaderUI/(?!Design/).*\\.swift"
+    regex: '\.font\(\s*\.system\(\s*size:\s*[0-9]'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Add a token to HanReaderUI/Design/ instead of a literal font size."
+    severity: error
+
+  no_inline_color_opacity:
+    name: "Inline colour opacity"
+    included: ".*/Sources/HanReaderUI/(?!Design/).*\\.swift"
+    regex: 'Color\.\w+\.opacity\('
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Define the colour role in Design/ with light, dark and high-contrast variants."
+    severity: error
+
+  no_raw_animation:
+    name: "Animation curve outside Design/"
+    included: ".*/Sources/HanReaderUI/(?!Design/).*\\.swift"
+    regex: '\.(easeInOut|easeIn|easeOut|linear|spring|bouncy|smooth|snappy|interpolatingSpring|timingCurve)\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Route animations through Design/AnimationTokens so reduce-motion is honoured."
+    severity: error
+
+  no_platform_check_outside_platform_dir:
+    name: "#if os() outside Platform/"
+    included: ".*/Sources/HanReaderUI/(?!Platform/).*\\.swift"
+    regex: '#if\s+os\('
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Confine platform divergence to HanReaderUI/Platform/."
+    severity: error
+
+reporter: xcode
