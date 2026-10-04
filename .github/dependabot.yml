@@ -1,14 +1,5 @@
 version: 2
 updates:
-  # Swift package dependencies. No-ops until Package.swift lands in M1.
-  - package-ecosystem: swift
-    directory: "/"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    commit-message:
-      prefix: "build"
-
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -16,3 +7,16 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
+
+  # The swift ecosystem is deliberately absent until Package.swift lands in
+  # milestone M1. Dependabot aborts with "No files found in /" when there is no
+  # manifest to read, so enabling it early just produces a weekly failed run.
+  # Re-add then:
+  #
+  # - package-ecosystem: swift
+  #   directory: "/"
+  #   schedule:
+  #     interval: weekly
+  #   open-pull-requests-limit: 3
+  #   commit-message:
+  #     prefix: "build"
