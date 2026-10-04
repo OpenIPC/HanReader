@@ -34,7 +34,10 @@ public struct DSLHeader: Hashable, Sendable {
     /// empty string, which is distinguishable from absent.
     mutating func consume(directive line: String) {
         let rest = line.dropFirst()
-        let split = rest.firstIndex(of: " ")
+        // Any horizontal whitespace, not a literal space. `#INCLUDE\t"b.dsl"`
+        // is a legal directive, and reading it as an unknown one leaves the
+        // include list empty and the other volumes undiscovered.
+        let split = rest.firstIndex { $0 == " " || $0 == "\t" }
         let directive = String(split.map { rest[rest.startIndex ..< $0] } ?? rest)
         let rawValue = split.map { String(rest[rest.index(after: $0)...]) } ?? ""
         let value = Self.unquote(rawValue.trimmingCharacters(in: .whitespaces))
@@ -57,14 +60,21 @@ public struct DSLHeader: Hashable, Sendable {
 /// One card, and where it starts.
 public struct DSLCardRecord: Hashable, Sendable {
     public let card: DSLCard
-    /// Byte offset of the card's first headword line.
+    /// Byte offset of the card's first headword line, or nil when the card has
+    /// no resume point in this file.
     ///
-    /// The resume point. It is recorded at a card boundary rather than at a
-    /// line or a batch boundary because that is the only place the importer can
-    /// restart without either losing a card or writing one twice.
-    public let offset: Int
+    /// The resume point is a card boundary rather than a line or a batch
+    /// boundary because that is the only place an importer can restart without
+    /// either losing a card or writing one twice.
+    ///
+    /// Nil for one case: a card whose headword was carried in from the
+    /// previous file of the set. No offset in *this* file restarts at it, and
+    /// an importer that checkpointed there would resume past the headword and
+    /// lose the card. A reader that needs a resume point for such a card wants
+    /// the previous file's, which it already has.
+    public let offset: Int?
 
-    public init(card: DSLCard, offset: Int) {
+    public init(card: DSLCard, offset: Int?) {
         self.card = card
         self.offset = offset
     }
@@ -119,8 +129,11 @@ public struct DSLCardReader {
 
     private var lines: DSLByteReader
     private var headwords: [String]
+    /// Byte offset of each headword line, parallel to `headwords`. Shorter
+    /// than it when headwords were carried in from the previous file, which is
+    /// how a seam-completed card knows it has no resume point of its own.
+    private var headwordOffsets: [Int] = []
     private var body: [String] = []
-    private var cardOffset = 0
 
     public init(
         source: any DSLByteSource,
@@ -134,7 +147,6 @@ public struct DSLCardReader {
             chunkSize: chunkSize,
         )
         headwords = leadingHeadwords
-        cardOffset = offset ?? 0
     }
 
     /// How the file spells its characters.
@@ -173,13 +185,11 @@ public struct DSLCardReader {
             guard body.isEmpty else {
                 let record = takeCard()
                 headwords = [text]
-                cardOffset = line.offset
+                headwordOffsets = [line.offset]
                 return record
             }
-            if headwords.isEmpty {
-                cardOffset = line.offset
-            }
             headwords.append(text)
+            headwordOffsets.append(line.offset)
         }
         return finalCard()
     }
@@ -187,17 +197,65 @@ public struct DSLCardReader {
     // MARK: - Cards
 
     private mutating func takeCard() -> DSLCardRecord {
+        let split = Self.readingLineCount(in: body)
         let record = DSLCardRecord(
             card: DSLCard(
                 headwords: headwords,
-                pinyin: body.first ?? "",
-                body: Array(body.dropFirst()),
+                pinyin: split == 1 ? body[0] : "",
+                body: Array(body.dropFirst(split)),
             ),
-            offset: cardOffset,
+            // Nil when the headwords came from the previous file: there is no
+            // offset in *this* file that would restart at this card, and
+            // offering zero would restart at the file's byte-order mark and
+            // lose the headword entirely.
+            offset: headwordOffsets.count == headwords.count ? headwordOffsets.first : nil,
         )
         headwords.removeAll(keepingCapacity: true)
+        headwordOffsets.removeAll(keepingCapacity: true)
         body.removeAll(keepingCapacity: true)
         return record
+    }
+
+    /// Whether the article's first line is a reading, as 1 or 0.
+    ///
+    /// A reading line is a convention of Chinese dictionaries rather than a
+    /// rule of the format, so it is detected rather than assumed. Two
+    /// conditions, both measured against all 3,434,224 BKRS cards:
+    ///
+    /// - **It contains no `[mN]`.** Zero reading lines in the set do, and an
+    ///   article's first line effectively always does. 287 reading lines *do*
+    ///   carry other markup — `lùzhóu, [i]разг.[/i] liùzhóu` — so the test has
+    ///   to be the sense tag specifically and not markup in general.
+    /// - **Something follows it.** A card with one indented line and no
+    ///   markup is genuinely ambiguous, and the two mistakes are not equal: a
+    ///   reading with no definition is not an entry worth having, while a
+    ///   definition read as a reading leaves the entry saying nothing at all.
+    ///
+    /// Without the first condition a dictionary that writes no readings — the
+    /// format does not require them — loses its first line of every article.
+    static func readingLineCount(in body: [String]) -> Int {
+        guard body.count > 1, let first = body.first, !containsSenseTag(first) else { return 0 }
+        return 1
+    }
+
+    /// Whether a line opens a sense. Scans scalars, as all markup must: `]`
+    /// followed by a zero-width non-joiner is a single `Character`.
+    private static func containsSenseTag(_ line: String) -> Bool {
+        let scalars = Array(line.unicodeScalars)
+        guard scalars.count >= 4 else { return false }
+        for index in 0 ... (scalars.count - 4) {
+            guard scalars[index] == "[", scalars[index + 1] == "m",
+                  scalars[index + 2].properties.numericType != nil,
+                  scalars[index + 2].isASCII,
+                  scalars[index + 3] == "]"
+            else { continue }
+            // An escaped `\[` is a literal bracket, not a tag.
+            if index > 0, scalars[index - 1] == "\\" {
+                continue
+            }
+            return true
+        }
+        return false
     }
 
     /// At end of file: a complete card, or a dangling headword reported and
@@ -205,15 +263,20 @@ public struct DSLCardReader {
     private mutating func finalCard() -> DSLCardRecord? {
         guard !headwords.isEmpty else { return nil }
         guard !body.isEmpty else {
-            for headword in headwords {
+            // Each headword reports its own line. Sharing the first one's
+            // offset across a run of them points every diagnostic but the
+            // first at the wrong place in the file.
+            let carried = headwords.count - headwordOffsets.count
+            for (index, headword) in headwords.enumerated() {
                 diagnostics.append(DSLDiagnostic(
                     kind: .headwordWithoutBody,
                     text: headword,
-                    offset: cardOffset,
+                    offset: index < carried ? nil : headwordOffsets[index - carried],
                 ))
             }
             trailingHeadwords = headwords
             headwords.removeAll()
+            headwordOffsets.removeAll()
             return nil
         }
         return takeCard()

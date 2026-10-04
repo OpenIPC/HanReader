@@ -52,6 +52,9 @@ public enum DSLByteError: Error, Hashable, Sendable, CustomStringConvertible {
     /// A resume offset past the end of the file, which is what a stale
     /// checkpoint against a replaced file looks like.
     case offsetOutOfRange(offset: Int, byteCount: Int)
+    /// The file ended before the length it reported, so it was shortened
+    /// while being read.
+    case truncated(read: Int, expected: Int)
     /// The file could not be opened or measured.
     case cannotOpen(path: String, code: Int32)
     /// A read failed part-way through the file.
@@ -66,6 +69,9 @@ public enum DSLByteError: Error, Hashable, Sendable, CustomStringConvertible {
             "byte offset \(offset) is odd, so it falls inside a UTF-16 code unit"
         case let .offsetOutOfRange(offset, byteCount):
             "byte offset \(offset) is past the end of a \(byteCount)-byte file"
+        case let .truncated(read, expected):
+            "the file ended after \(read) bytes but reported \(expected) — it was "
+                + "shortened while being read"
         case let .cannotOpen(path, code):
             "cannot open \(path): \(String(cString: strerror(code)))"
         case let .readFailed(offset, code):
@@ -343,6 +349,14 @@ public struct DSLByteReader {
         while available < chunk.count {
             let read = try source.read(at: nextOffset, into: &chunk, from: available)
             guard read > 0 else {
+                // End of file where the file said there was more. Something
+                // shortened it since it was measured, and the alternative to
+                // saying so is a dictionary quietly missing its tail — or, in
+                // UTF-16, a final half-character dropped without the
+                // odd-length check ever running.
+                guard nextOffset >= byteCount else {
+                    throw DSLByteError.truncated(read: nextOffset, expected: byteCount)
+                }
                 reachedEnd = true
                 break
             }

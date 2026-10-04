@@ -56,7 +56,7 @@ public struct DSLFileSet: Hashable, Sendable {
 
     /// Follows at most this many `#INCLUDE` hops. A visited set already stops
     /// a cycle; this stops a pathological file from being a denial of service.
-    static let fileLimit = 64
+    public static let fileLimit = 64
 
     /// Works out which files belong with the one the reader picked.
     ///
@@ -85,7 +85,18 @@ public struct DSLFileSet: Hashable, Sendable {
             var diagnostics: [DSLDiagnostic] = []
             var queue = header.includes.map { (parent: url, name: $0) }
 
-            while !queue.isEmpty, files.count < fileLimit {
+            while !queue.isEmpty {
+                guard files.count < fileLimit else {
+                    // Returning 64 volumes of a 65-volume dictionary as
+                    // though it were complete is the worst of the three
+                    // possible behaviours: it imports, it looks right, and the
+                    // missing volume's words simply cannot be found.
+                    diagnostics.append(DSLDiagnostic(
+                        kind: .tooManyFiles(limit: fileLimit),
+                        text: queue.map(\.name).joined(separator: ", "),
+                    ))
+                    break
+                }
                 let (parent, name) = queue.removeFirst()
                 let target = parent.deletingLastPathComponent()
                     .appendingPathComponent(name)
@@ -107,14 +118,25 @@ public struct DSLFileSet: Hashable, Sendable {
             )
         }
 
-        let siblings = numberedSiblings(of: url, fileManager: fileManager)
+        var truncated = false
+        let siblings = numberedSiblings(of: url, fileManager: fileManager, truncated: &truncated)
         guard siblings.count > 1 else {
             return Self(files: [url.standardizedFileURL], header: header, discovery: .single)
         }
         if siblings[0] != url.standardizedFileURL {
             return try discover(from: siblings[0], fileManager: fileManager)
         }
-        return Self(files: siblings, header: header, discovery: .numberedSiblings)
+        return Self(
+            files: siblings,
+            header: header,
+            discovery: .numberedSiblings,
+            diagnostics: truncated
+                ? [DSLDiagnostic(
+                    kind: .tooManyFiles(limit: fileLimit),
+                    text: url.lastPathComponent,
+                )]
+                : [],
+        )
     }
 
     /// Files beside `url` whose names differ only in a trailing number.
@@ -123,7 +145,13 @@ public struct DSLFileSet: Hashable, Sendable {
     /// from 1: a gap ends it, because a set missing its second volume is a set
     /// of one, not a set of two with a hole. Zero padding is preserved, so
     /// `vol_01` looks for `vol_02` and not `vol_2`.
-    static func numberedSiblings(of url: URL, fileManager: FileManager) -> [URL] {
+    static func numberedSiblings(
+        of url: URL,
+        fileManager: FileManager,
+        truncated: inout Bool,
+    )
+        -> [URL]
+    {
         let stem = url.deletingPathExtension().lastPathComponent
         let digits = stem.reversed().prefix { $0.isASCII && $0.isNumber }
         guard !digits.isEmpty else { return [url.standardizedFileURL] }
@@ -135,7 +163,7 @@ public struct DSLFileSet: Hashable, Sendable {
 
         var found: [URL] = []
         var number = 1
-        while found.count < fileLimit {
+        while true {
             let padded = String(number).count >= width
                 ? String(number)
                 : String(repeating: "0", count: width - String(number).count) + String(number)
@@ -145,6 +173,13 @@ public struct DSLFileSet: Hashable, Sendable {
             guard fileManager.fileExists(atPath: candidate.path) else { break }
             found.append(candidate)
             number += 1
+            // The run is capped for the same reason the include walk is, and
+            // reported the same way: the caller is told the set is longer than
+            // this rather than handed a silently short one.
+            if found.count >= fileLimit {
+                truncated = true
+                break
+            }
         }
         // The picked file must be in the run; otherwise the names matched by
         // accident and it is safer to import only what was asked for.

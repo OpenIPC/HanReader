@@ -27,6 +27,9 @@ public struct DSLDiagnostic: Hashable, Sendable {
         /// An `#INCLUDE` naming a file that is not beside the one including
         /// it.
         case missingInclude(String)
+        /// Discovery stopped at its file limit with files still to follow, so
+        /// the set it returned is incomplete.
+        case tooManyFiles(limit: Int)
     }
 
     public let kind: Kind

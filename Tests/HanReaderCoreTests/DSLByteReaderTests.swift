@@ -39,6 +39,27 @@ private func lines(
     return result
 }
 
+/// A source that reports its full length but stops delivering part way, which
+/// is what a file truncated between being measured and being read looks like.
+private struct ShrinkingBytes: DSLByteSource {
+    let bytes: [UInt8]
+    let delivering: Int
+
+    var byteCount: Int {
+        bytes.count
+    }
+
+    func read(at offset: Int, into buffer: inout [UInt8], from destination: Int) throws -> Int {
+        guard offset >= 0, offset < delivering, destination < buffer.count else { return 0 }
+        let count = min(buffer.count - destination, delivering - offset)
+        buffer.replaceSubrange(
+            destination ..< (destination + count),
+            with: bytes[offset ..< (offset + count)],
+        )
+        return count
+    }
+}
+
 /// The real shape of a BKRS file: two CRLF header lines, a blank line, then
 /// LF-terminated cards, ending with a line feed.
 private let header = "#NAME \"大БКРС\"\r\n#INDEX_LANGUAGE \"Chinese\"\r\n"
@@ -179,6 +200,20 @@ struct DSLByteReaderTests {
     func misalignedOffset() throws {
         #expect(throws: DSLByteError.misalignedOffset(5)) {
             _ = try lines(utf16("a\nb\n"), resumingAt: 5)
+        }
+    }
+
+    /// A source that reports one length and then delivers less was shortened
+    /// while being read. Accepting it means a dictionary quietly missing its
+    /// tail — and in UTF-16, a final half-character dropped without the
+    /// odd-length check ever running.
+    @Test("A file that ends early is refused")
+    func truncatedWhileReading() throws {
+        let bytes = utf16("爱\n了\n一\n")
+        let source = ShrinkingBytes(bytes: bytes, delivering: 8)
+        var reader = try DSLByteReader(source: source, chunkSize: 4)
+        #expect(throws: DSLByteError.truncated(read: 8, expected: bytes.count)) {
+            while try reader.next() != nil {}
         }
     }
 

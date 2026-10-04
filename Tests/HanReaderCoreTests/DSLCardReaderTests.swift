@@ -66,14 +66,44 @@ struct DSLCardReaderTests {
         #expect(result.map(\.body) == [["[m1]любить[/m]"], ["[m1]частица[/m]"]])
     }
 
-    /// The reading is the first indented line and the article is the rest, so
-    /// a card with no article still has its reading rather than shifting the
-    /// article into it.
-    @Test("A card with only a reading line keeps it as the reading")
-    func readingWithoutArticle() throws {
-        let result = try cards("爱\n ài\n")
-        #expect(result.map(\.pinyin) == ["ài"])
-        #expect(result[0].body.isEmpty)
+    // MARK: - Telling a reading line from an article line
+
+    /// A reading line is a convention of Chinese dictionaries, not a rule of
+    /// the format, so it is detected rather than assumed. A dictionary that
+    /// writes no readings — which DSL permits — would otherwise lose the first
+    /// line of every article to a reading field.
+    @Test("A card whose article opens with a sense tag has no reading")
+    func articleWithoutReading() throws {
+        let result = try cards("dog\n [m1]animal[/m]\n [m1]пёс[/m]\n")
+        #expect(result[0].pinyin.isEmpty)
+        #expect(result[0].body == ["[m1]animal[/m]", "[m1]пёс[/m]"])
+    }
+
+    /// 287 reading lines in the set carry markup — an italic register note
+    /// between two readings — so the test has to be the sense tag
+    /// specifically, not markup in general.
+    @Test("A reading line carrying other markup is still a reading")
+    func readingWithMarkup() throws {
+        let result = try cards("陆轴\n lùzhóu, [i]разг.[/i] liùzhóu\n [m1]каток[/m]\n")
+        #expect(result[0].pinyin == "lùzhóu, [i]разг.[/i] liùzhóu")
+        #expect(result[0].body == ["[m1]каток[/m]"])
+    }
+
+    /// One indented line with no markup is genuinely ambiguous, and the two
+    /// mistakes are not equal: a reading with no definition is not an entry
+    /// worth having, while a definition read as a reading leaves the entry
+    /// saying nothing at all.
+    @Test("A single indented line is article text, not a reading")
+    func singleLineIsArticle() throws {
+        let result = try cards("爱\n любить\n")
+        #expect(result[0].pinyin.isEmpty)
+        #expect(result[0].body == ["любить"])
+    }
+
+    @Test("An escaped bracket does not look like a sense tag")
+    func escapedBracketIsNotATag() throws {
+        let result = try cards("爱\n \\[m1\\] ài\n [m1]любить[/m]\n")
+        #expect(result[0].pinyin == "\\[m1\\] ài")
     }
 
     /// Exactly one card in the set — 乐芙兰 — breaks a line inside an open
@@ -166,7 +196,8 @@ struct DSLCardReaderTests {
         for record in result {
             let headword = record.card.headwords[0]
             let expected = Array(headword.utf16).flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
-            #expect(Array(bytes[record.offset ..< (record.offset + expected.count)]) == expected)
+            let offset = try #require(record.offset)
+            #expect(Array(bytes[offset ..< (offset + expected.count)]) == expected)
         }
     }
 
@@ -206,6 +237,18 @@ struct DSLCardReaderTests {
         #expect(reader.header.other == ["ICON_FILE": "x.bmp", "SOUND_DICTIONARY": ""])
     }
 
+    /// The format separates a directive from its value with whitespace, not
+    /// with a space specifically. Read as an unknown directive, a
+    /// tab-separated `#INCLUDE` leaves the include list empty and the other
+    /// volumes undiscovered.
+    @Test("A directive separated by a tab is still a directive")
+    func tabSeparatedDirective() throws {
+        let reader = try read("#INCLUDE\t\"b.dsl\"\n#NAME\t\"A\"\n\n").reader
+        #expect(reader.header.includes == ["b.dsl"])
+        #expect(reader.header.name == "A")
+        #expect(reader.header.other.isEmpty)
+    }
+
     @Test("Reading only the header stops at the first card")
     func headerOnlyRead() throws {
         let header = try DSLHeader.read(from: DSLMemoryBytes(utf16(file)))
@@ -236,6 +279,39 @@ struct DSLCardReaderTests {
         #expect(result.reader.diagnostics.map(\.kind) == [.headwordWithoutBody])
     }
 
+    /// Each headword reports its own line. Sharing the first one's offset
+    /// across a run of them points every diagnostic but the first at the wrong
+    /// place in the file, which is worse than no offset at all.
+    @Test("Each dangling headword reports its own line")
+    func danglingHeadwordOffsets() throws {
+        let text = "爱\n ài\n [m1]x[/m]\n了\n一\n"
+        let result = try read(text)
+        let bytes = utf16(text)
+        let offsets = result.reader.diagnostics.compactMap(\.offset)
+        #expect(offsets.count == 2)
+        #expect(offsets[0] != offsets[1])
+        for (offset, headword) in zip(offsets, ["了", "一"]) {
+            let expected = Array(headword.utf16).flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
+            #expect(Array(bytes[offset ..< (offset + expected.count)]) == expected)
+        }
+    }
+
+    /// A card completed across a file seam has no resume point in the file it
+    /// was completed in: offset zero there restarts at the byte-order mark and
+    /// loses the carried headword entirely.
+    @Test("A card completed across a seam offers no resume point")
+    func seamCardHasNoOffset() throws {
+        let result = try read(
+            " le\n [m1]частица[/m]\n一\n yī\n [m1]один[/m]\n",
+            leadingHeadwords: ["了"],
+        )
+        #expect(result.records.count == 2)
+        #expect(result.records[0].card.headwords == ["了"])
+        #expect(result.records[0].offset == nil)
+        // The card that does start in this file keeps its offset.
+        #expect(result.records[1].offset != nil)
+    }
+
     /// The repair: the headword left over from the previous file is passed in,
     /// and the article that opens this one completes its card.
     @Test("A headword carried in from the previous file completes its card")
@@ -253,7 +329,7 @@ struct DSLCardReaderTests {
 @Suite("DSL file-set discovery")
 struct DSLFileSetTests {
     /// Writes a throwaway directory of DSL files.
-    private func directory(
+    func directory(
         _ files: [String: String],
         _ body: (URL) throws -> Void,
     ) throws {
@@ -378,6 +454,43 @@ struct DSLFileSetTests {
             let set = try DSLFileSet.discover(from: root.appendingPathComponent("dict_9.dsl"))
             #expect(set.files.map(\.lastPathComponent) == ["dict_9.dsl"])
             #expect(set.discovery == .single)
+        }
+    }
+
+    /// Returning 64 volumes of a 65-volume dictionary as though it were
+    /// complete is the worst of the three possible behaviours: it imports, it
+    /// looks right, and the missing volume's words simply cannot be found.
+    @Test("Discovery says so when it stops at its file limit")
+    func tooManyIncludes() throws {
+        var files: [String: String] = [:]
+        let includes = (1 ... DSLFileSet.fileLimit + 2)
+            .map { "#INCLUDE \"v\($0).dsl\"\n" }
+            .joined()
+        files["a.dsl"] = "#NAME \"A\"\n" + includes + "\n爱\n ài\n [m1]x[/m]\n"
+        for index in 1 ... DSLFileSet.fileLimit + 2 {
+            files["v\(index).dsl"] = "#NAME \"\(index)\"\n\n了\n le\n [m1]y[/m]\n"
+        }
+        try directory(files) { root in
+            let set = try DSLFileSet.discover(from: root.appendingPathComponent("a.dsl"))
+            #expect(set.files.count == DSLFileSet.fileLimit)
+            #expect(set.diagnostics.contains {
+                $0.kind == .tooManyFiles(limit: DSLFileSet.fileLimit)
+            })
+        }
+    }
+
+    @Test("A numbered run that hits the limit says so too")
+    func tooManySiblings() throws {
+        var files: [String: String] = [:]
+        for index in 1 ... DSLFileSet.fileLimit + 2 {
+            files["vol_\(index).dsl"] = "#NAME \"\(index)\"\n\n了\n le\n [m1]y[/m]\n"
+        }
+        try directory(files) { root in
+            let set = try DSLFileSet.discover(from: root.appendingPathComponent("vol_1.dsl"))
+            #expect(set.files.count == DSLFileSet.fileLimit)
+            #expect(set.diagnostics.contains {
+                $0.kind == .tooManyFiles(limit: DSLFileSet.fileLimit)
+            })
         }
     }
 
