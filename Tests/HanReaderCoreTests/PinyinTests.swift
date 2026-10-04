@@ -363,3 +363,83 @@ struct PinyinRegressionTests {
         #expect(PinyinSyllabifier.syllables(fromDiacritic: text, bases: bases) == nil)
     }
 }
+
+/// Spacing between proper nouns.
+///
+/// Found while checking the reader end to end against a real text: 林冲
+/// rendered as `LínChōng`. CC-CEDICT separates every syllable with a space,
+/// so the source spacing says nothing about word boundaries — but a capital
+/// marks the start of a proper noun, and that does.
+@Suite("Proper-noun spacing")
+struct ProperNounSpacingTests {
+    private func display(_ numeric: String) -> String {
+        Pinyin.display(Pinyin.parse(numeric: numeric))
+    }
+
+    @Test("A name's syllables are separated from the surname")
+    func surnameAndGivenName() {
+        #expect(display("Lin2 Chong1") == "Lín Chōng")
+        #expect(display("Ding1 Ling2") == "Dīng Líng")
+    }
+
+    /// The case that shows the rule is about capitals and not about the
+    /// source's spaces: 丁汝昌 is `Ding1 Ru3 chang1`, and the given name's
+    /// two syllables run together while the surname stands apart.
+    @Test("A two-syllable given name stays one word")
+    func givenNameSyllablesJoin() {
+        #expect(display("Ding1 Ru3 chang1") == "Dīng Rǔchāng")
+    }
+
+    @Test("An ordinary capitalised word is unchanged")
+    func singleProperNoun() {
+        #expect(display("Bei3 jing1") == "Běijīng")
+        #expect(display("Zhong1 guo2") == "Zhōngguó")
+        #expect(display("Jie3 fang4 jun1") == "Jiěfàngjūn")
+    }
+
+    @Test("A lowercase word is unchanged")
+    func commonWords() {
+        #expect(display("ni3 hao3") == "nǐhǎo")
+        #expect(display("bu4 hao3 yi4 si5") == "bùhǎoyìsi")
+    }
+
+    @Test("Two names in one reading are both separated")
+    func severalProperNouns() {
+        #expect(display("Bei3 jing1 Da4 xue2") == "Běijīng Dàxué")
+    }
+
+    /// What the rule cannot do, asserted rather than left to be discovered.
+    ///
+    /// A capital says a new unit *starts*; nothing says where one *ends*.
+    /// `Zhong1 guo2` must join into Zhōngguó, and the `Zhong1 yi1` inside
+    /// 一中一台 must not join — the same shape with different answers, which
+    /// capitalisation cannot distinguish because CC-CEDICT does not record
+    /// word boundaries at all.
+    ///
+    /// So a lowercase syllable after a capitalised one still attaches to it.
+    /// `yī Zhōngyī Tái` is wrong, and it is a clear improvement on
+    /// `yīZhōngyīTái`; getting it right needs boundary data the dictionary
+    /// does not have.
+    @Test("A lowercase syllable after a name still joins it")
+    func theLimitOfTheRule() {
+        #expect(display("yi1 Zhong1 yi1 Tai2") == "yī Zhōngyī Tái")
+    }
+
+    /// The apostrophe rule still applies where a space does not.
+    @Test("An apostrophe is still inserted inside a word")
+    func apostropheSurvives() {
+        #expect(display("Xi1 an1") == "Xī'ān")
+        // And a capital wins over it: these are two names, not one word
+        // needing a disambiguating apostrophe.
+        #expect(display("Xi1 An1") == "Xī Ān")
+    }
+
+    /// Spacing is a display concern. The numeric form is the
+    /// cross-dictionary merge key and has to keep round-tripping to
+    /// CC-CEDICT's own spelling.
+    @Test("The merge key is untouched")
+    func numericIsUnchanged() {
+        #expect(Pinyin.display(Pinyin.parse(numeric: "Lin2 Chong1"), style: .numeric)
+            == "Lin2 Chong1")
+    }
+}
