@@ -53,6 +53,23 @@ struct TokenView: View {
         .accessibilityValue(reading?.display ?? "")
         .accessibilityAddTraits(token.isLookupCandidate ? .isButton : [])
         .accessibilityHidden(!token.isLookupCandidate)
+        // Not optional, and not a refinement of the trait above.
+        //
+        // `onTapGesture` is a gesture, and a gesture is invisible to the
+        // accessibility system — it publishes no press action. Adding
+        // `.isButton` without this announces a control that cannot be
+        // operated: the element says "button", VoiceOver offers to activate
+        // it, and nothing happens. Verified on the running app, where a
+        // token's only action was `AXScrollToVisible`.
+        //
+        // Tapping a word is this app's entire interaction, so without a
+        // press action a VoiceOver reader can hear the text and never look
+        // anything up.
+        .accessibilityAction {
+            if token.isLookupCandidate {
+                onTap(token.id)
+            }
+        }
     }
 
     // MARK: - Layers
