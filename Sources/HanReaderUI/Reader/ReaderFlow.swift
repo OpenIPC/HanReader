@@ -19,6 +19,13 @@ nonisolated struct TokenFlowValue: Hashable, Sendable {
     let gluesToPrevious: Bool
     /// Whether a line may end with this token: an opening bracket may not.
     let canEndLine: Bool
+    /// Whether this token takes up no space when it begins a line.
+    ///
+    /// True for whitespace in the source. Without it, a wrap that lands just
+    /// before a space indents the next line by a space — and in text mixing
+    /// Chinese with Latin, which is the text this reader is for, spaces are
+    /// common enough that this is an ordinary case rather than a rare one.
+    let collapsesAtLineStart: Bool
 }
 
 /// The parts of reader layout that are pure arithmetic over tokens.
@@ -35,6 +42,7 @@ nonisolated enum ReaderFlow {
                 leadingSpace: leadingSpace(beforeTokenAt: index, in: tokens, style: style),
                 gluesToPrevious: LineBreakRules.glueToPrevious(tokens[index].text),
                 canEndLine: LineBreakRules.canEndLine(tokens[index].text),
+                collapsesAtLineStart: tokens[index].kind == .whitespace,
             )
         }
     }

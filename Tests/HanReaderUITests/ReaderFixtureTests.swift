@@ -69,8 +69,8 @@ struct ReaderFixtureTests {
     @Test("Selecting a lemma matches every occurrence of it")
     func lemmaMatchesEveryOccurrence() {
         let matched = ReaderFixtures.tokens(matching: ["了"], in: document)
-        // 了 appears three times in the fixture: twice in 笑了笑's clause and
-        // once after 举行.
+        // 了 appears three times, once in each of the three prose paragraphs:
+        // 举行了阅兵式 · 笑了笑 · 我拍了三个照片.
         #expect(matched.count == 3)
         for id in matched {
             #expect(document[id]?.text == "了")

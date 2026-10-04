@@ -97,6 +97,26 @@ These are deliberate, and each is a fix rather than a regression.
 | Spacing tuned as absolute points at one font size | Every measurement is a ratio of the font size | `lineSpacing: 16` was tuned at 22pt. At 48pt the text is cramped; at 14pt it is airy. |
 | In-text drag selection | Paragraph and sentence copy commands, plus share | Separate `Text` views cannot be selected across. This is the one documented trigger for moving the renderer to TextKit 2 — see [ARCHITECTURE.md](ARCHITECTURE.md). |
 
+## Tap targets are the size of the words
+
+Apple's 44-point minimum cannot be met by a word in running text, and this is
+worth stating plainly rather than leaving as an implied promise. A single Han
+character at 14 points is 14 points wide; the word beside it starts a few
+points later. Padding the target to 44 points would overlap the neighbouring
+word's target, and an ambiguous target that selects the wrong word is worse
+than a small one that selects the right one.
+
+What the reader does instead:
+
+- The target is the whole token box, which includes the ruby band above the
+  glyphs — about 41 points tall at the default reading size, not 26.
+- On a compact width the resolved reading size is floored at 18 points, which
+  is the one lever that genuinely enlarges the target.
+
+An earlier draft of the design system declared a `minimumHitTarget` constant
+that nothing honoured. It has been removed: a named guarantee that no code
+delivers is worse than an acknowledged limitation.
+
 ## Dynamic Type is asymmetric, on purpose
 
 The chrome honours Dynamic Type uncapped, and every fixed dimension in it is a

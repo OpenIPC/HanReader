@@ -9,6 +9,7 @@ nonisolated struct TokenFlowKey: LayoutValueKey {
         leadingSpace: 0,
         gluesToPrevious: false,
         canEndLine: true,
+        collapsesAtLineStart: false,
     )
 }
 
@@ -50,7 +51,6 @@ nonisolated struct TokenFlowLayout: Layout {
         var key: Key?
         var lines: [LineRun] = []
         var size: CGSize = .zero
-        var sizes: [CGSize] = []
     }
 
     struct Key: Hashable {
@@ -98,7 +98,15 @@ nonisolated struct TokenFlowLayout: Layout {
                         y: bounds.minY + line.y,
                     ),
                     anchor: .topLeading,
-                    proposal: ProposedViewSize(cache.sizes[index]),
+                    // The proposal the subview was *measured* with, not its
+                    // measured size. A token widened by its reading would
+                    // otherwise be placed under a wider proposal than it was
+                    // sized under, and a base text that wraps internally can
+                    // answer a wider proposal with a different height -- so
+                    // the paragraph would be measured one way and drawn
+                    // another. Proposing the same thing twice makes the two
+                    // passes agree by construction.
+                    proposal: ProposedViewSize(width: proposal.width, height: nil),
                 )
             }
         }
@@ -129,12 +137,12 @@ nonisolated struct TokenFlowLayout: Layout {
                 leadingSpace: flow.leadingSpace,
                 glueToPrevious: flow.gluesToPrevious,
                 canEndLine: flow.canEndLine,
+                collapsesAtLineStart: flow.collapsesAtLineStart,
             )
         }
         let lines = layOutLines(items, width: available, lineSpacing: style.lineGap)
 
         cache.key = key
-        cache.sizes = sizes
         cache.lines = lines
         cache.size = CGSize(
             // The proposed width when there is one, so paragraphs align as a

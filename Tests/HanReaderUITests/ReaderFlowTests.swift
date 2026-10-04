@@ -93,6 +93,23 @@ struct ReaderFlowTests {
         }
     }
 
+    /// A wrap that lands just before a source space would otherwise indent
+    /// the next line by a space. The geometry of that is `layOutLines`' job
+    /// and is tested there; what this checks is that the reader marks the
+    /// right tokens — and only those.
+    @Test("Only source whitespace collapses at a line start")
+    func onlyWhitespaceCollapses() {
+        let list = tokens("我爱 iPhone 15。")
+        let values = ReaderFlow.flowValues(for: list, style: separated)
+        for (token, value) in zip(list, values) {
+            #expect(
+                value.collapsesAtLineStart == (token.kind == .whitespace),
+                "\(token.text) (\(token.kind))",
+            )
+        }
+        #expect(values.contains { $0.collapsesAtLineStart })
+    }
+
     @Test("Flow values are produced one per token")
     func oneValuePerToken() {
         let list = tokens(ReaderFixtures.proseSource)

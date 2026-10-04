@@ -70,7 +70,7 @@ struct TokenFlowLayoutTests {
         let cache = TokenFlowLayout.Cache()
         #expect(cache.key == nil)
         #expect(cache.lines.isEmpty)
-        #expect(cache.sizes.isEmpty)
+        #expect(cache.size == .zero)
     }
 
     // MARK: - Failure mode

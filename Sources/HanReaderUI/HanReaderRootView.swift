@@ -19,7 +19,14 @@ public struct HanReaderRootView: View {
     public init() {}
 
     public var body: some View {
-        FixtureReader()
+        // A navigation container even though nothing navigates yet. On macOS
+        // a `WindowGroup` supplies a window toolbar, so `.toolbar` works
+        // without one; on iOS it does not, and the reader's controls and
+        // title simply would not appear. The library arrives here in a later
+        // pull request and makes the stack load-bearing.
+        NavigationStack {
+            FixtureReader()
+        }
     }
 }
 
@@ -45,11 +52,23 @@ struct FixtureReader: View {
     /// real factor.
     @ScaledMetric(relativeTo: .body) private var textScaleProbe = 100.0
 
+    /// Present and `.regular` on macOS, so this needs no platform branch.
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     private var style: ReaderStyle {
         ReaderStyle(
             fontSize: fontSize,
             spacing: spacing,
             textScale: textScaleProbe / 100,
+            // Without this the 18pt compact floor exists only in its own
+            // tests. On an iPhone, 14pt scaled down by Dynamic Type's 0.9
+            // gives a 12.6pt glyph, and a tap target to match -- which is the
+            // one place the 44pt guarantee can be bought back, since a word's
+            // target is its text and cannot be padded without overlapping the
+            // word beside it.
+            minimumFontSize: sizeClass == .compact
+                ? ReaderStyle.compactFontSizeFloor
+                : ReaderStyle.fontSizeRange.lowerBound,
         )
     }
 
@@ -106,7 +125,11 @@ struct FixtureReader: View {
             } label: {
                 Label("Larger text", systemImage: "textformat.size.larger")
             }
-            .keyboardShortcut("+", modifiers: .command)
+            // The "=" key, not "+". On most layouts `+` is the shifted `=`,
+            // so binding it means the advertised ⌘+ fires only as ⌘⇧+ while
+            // ⌘= -- which is what people actually press, and what every other
+            // Mac app accepts -- does nothing at all.
+            .keyboardShortcut("=", modifiers: .command)
         }
         ToolbarItem(placement: .primaryAction) {
             Button {

@@ -323,3 +323,93 @@ struct LineBreakingRegressionTests {
         #expect(layOutLines([], width: 10, lineSpacing: 4).totalHeight == 0)
     }
 }
+
+/// Whitespace that lands at a line start.
+///
+/// Found in review of the reading surface, and genuinely reachable: the texts
+/// this reader is for mix Chinese with Latin, so source spaces are common,
+/// and a wrap that lands just before one indented the next line by a space.
+@Suite("Leading whitespace")
+struct LeadingWhitespaceTests {
+    private func space(_ advance: Double) -> LineItem {
+        LineItem(advance: advance, height: 10, collapsesAtLineStart: true)
+    }
+
+    private func word(_ advance: Double) -> LineItem {
+        LineItem(advance: advance, height: 10)
+    }
+
+    /// A space only reaches a line start when it does not fit at the end of
+    /// the line before — 35 + 30 leaves five points and the space needs ten,
+    /// so it wraps. When it *does* fit it stays put and hangs at the line end,
+    /// which is the right answer and is covered below.
+    @Test("A space that begins a line takes up no room")
+    func collapsedAtLineStart() {
+        let items = [word(35), word(30), space(10), word(30)]
+        let lines = layOutLines(items, width: 70)
+
+        #expect(lines.count == 2)
+        #expect(lines[1].range == 2 ..< 4)
+        // The space sits at the margin and claims nothing, so the word after
+        // it starts at the margin too.
+        #expect(lines[1].xOffsets == [0, 0])
+        #expect(lines[1].width == 30)
+    }
+
+    @Test("A space that fits stays at the end of its line")
+    func hangsAtLineEnd() {
+        let items = [word(30), word(30), space(10), word(30)]
+        let lines = layOutLines(items, width: 70)
+
+        #expect(lines.count == 2)
+        #expect(lines[0].range == 0 ..< 3)
+        #expect(lines[1].range == 3 ..< 4)
+        #expect(lines[1].xOffsets == [0])
+    }
+
+    @Test("A space in the middle of a line takes up its full width")
+    func notCollapsedMidLine() {
+        let lines = layOutLines([word(30), space(10), word(30)], width: 200)
+        #expect(lines.count == 1)
+        #expect(lines[0].xOffsets == [0, 30, 40])
+        #expect(lines[0].width == 70)
+    }
+
+    /// The collapsed width must be used when deciding what fits, not only
+    /// when placing. Otherwise a line that is exactly full would push its
+    /// first real word onto the line after.
+    @Test("A collapsed space leaves room for the word that follows it")
+    func collapsedWidthCountsTowardsFitting() {
+        let items = [word(70), space(10), word(70)]
+        let lines = layOutLines(items, width: 70)
+
+        #expect(lines.count == 2)
+        #expect(lines[1].range == 1 ..< 3)
+        #expect(lines[1].width == 70)
+    }
+
+    @Test("Collapsing changes nothing when no space starts a line")
+    func noEffectWithoutALineStartingSpace() {
+        let items = [word(30), space(10), word(30)]
+        #expect(layOutLines(items, width: 200) == layOutLines(
+            [word(30), LineItem(advance: 10, height: 10), word(30)],
+            width: 200,
+        ))
+    }
+
+    @Test("Source whitespace is marked collapsible and nothing else is")
+    func onlyWhitespaceCollapses() {
+        let lexicon = Lexicon(words: ["中国"])
+        let tokens = TextSegmenter(words: MaxMatchSegmenter(lexicon: lexicon))
+            .segment("中国 iPhone 15。")
+            .blocks.flatMap(\.tokens)
+        let items = tokens.lineItems(measuredBy: FixedMeasurer())
+
+        for (token, item) in zip(tokens, items) {
+            #expect(
+                item.collapsesAtLineStart == (token.kind == .whitespace),
+                "\(token.text) (\(token.kind))",
+            )
+        }
+    }
+}

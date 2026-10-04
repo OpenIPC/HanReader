@@ -91,7 +91,6 @@ nonisolated enum ReaderMetrics {
     static let readingColumnPadding = 24.0
     /// Minimum hit target. Apple's guideline is 44pt, and a tapped word is
     /// this app's primary interaction.
-    static let minimumHitTarget = 44.0
     /// Corner radius on a token's highlight.
     static let tokenCornerRadius = 4.0
 }
