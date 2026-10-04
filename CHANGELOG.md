@@ -44,6 +44,15 @@ it needs to read like release notes rather than a commit log.
 - CC-CEDICT parser and the dictionary model, with senses, cross-references
   extracted from gloss text, and entries keyed by headword *and* reading so
   that words with several pronunciations keep all of them.
+- Dictionary containers: a self-contained `.hanreaderdict` SQLite file per
+  dictionary, carrying its own licence and attribution so the terms travel with
+  the data. Compiled at build time rather than on first launch, which is what
+  lets the app open a 32 MB dictionary in under a millisecond instead of
+  spending nearly three seconds parsing text.
+- `hanreader-dictgen cedict` and `verify`, which compile and check a
+  dictionary and refuse to produce one that has silently lost entries.
+- Derived from the dictionary rather than written by hand: the segmentation
+  word list, per-character pinyin readings, and the syllable inventory.
 - Library database on GRDB, with versioned migrations from the first release.
   Texts deduplicate on content rather than title, reading position is stored as
   a character offset so it survives a font-size change, revealed words are
