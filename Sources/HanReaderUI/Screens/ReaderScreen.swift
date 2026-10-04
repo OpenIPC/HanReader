@@ -138,14 +138,14 @@ struct ReaderScreen: View {
             },
             topBlock: $model.topBlock,
         )
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .modifier(DetailPanelPlacement(isCompact: sizeClass == .compact) {
             WordDetailPanel(
                 state: model.detail,
                 style: style,
                 onExpand: { isInspectorPresented = true },
                 onSpeak: { speech.speak($0, suppressed: voiceOverEnabled) },
             )
-        }
+        })
         // One modifier for both platforms. On a regular width this is a side
         // panel; on a compact one SwiftUI presents it as a sheet by itself,
         // which is exactly the behaviour wanted and needs no `#if os(`.
@@ -196,6 +196,28 @@ struct ReaderScreen: View {
             }
             .keyboardShortcut("-", modifiers: .command)
             .disabled(settings.fontSize <= ReaderStyle.fontSizeRange.lowerBound)
+        }
+    }
+}
+
+/// Puts the word-detail panel where the platform wants it.
+///
+/// Above the text on a regular width, which is the prototype's placement and
+/// what Docs/fidelity.md commits to; below it on a compact one, where the
+/// bottom of the screen is reachable and the top is under the status bar.
+///
+/// A modifier rather than two `.safeAreaInset` calls, because an inset with
+/// an empty body still reserves its spacing — the panel would be at the
+/// bottom and a blank band would sit at the top.
+private struct DetailPanelPlacement<Panel: View>: ViewModifier {
+    let isCompact: Bool
+    @ViewBuilder let panel: () -> Panel
+
+    func body(content: Content) -> some View {
+        if isCompact {
+            content.safeAreaInset(edge: .bottom, spacing: 0, content: panel)
+        } else {
+            content.safeAreaInset(edge: .top, spacing: 0, content: panel)
         }
     }
 }

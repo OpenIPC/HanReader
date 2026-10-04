@@ -49,6 +49,12 @@ A tapped word stays visible while its definition is on screen. The detail
 surface is a fixed-height panel that the reading surface insets itself for,
 not an overlay.
 
+**It sits above the text on a regular width** — the prototype's placement —
+and below it on a compact one, where the bottom of the screen is reachable
+and the top is under the status bar. This is written down because leaving it
+unwritten is exactly how it went wrong: the panel shipped at the bottom on
+both, which is not what the plan specified and not what the prototype did.
+
 The panel's height is fixed deliberately. One that grew to fit its content
 would push the body text down every time a word with a longer definition was
 tapped — which is invariant 1 lost through the back door.
@@ -96,6 +102,17 @@ These are deliberate, and each is a fix rather than a regression.
 | `SegmentationMode { split, unsplit }` | `WordSpacing { separated, continuous }` | The setting never touched segmentation. It controls the gap drawn between tokens. |
 | Spacing tuned as absolute points at one font size | Every measurement is a ratio of the font size | `lineSpacing: 16` was tuned at 22pt. At 48pt the text is cramped; at 14pt it is airy. |
 | In-text drag selection | Paragraph and sentence copy commands, plus share | Separate `Text` views cannot be selected across. This is the one documented trigger for moving the renderer to TextKit 2 — see [ARCHITECTURE.md](ARCHITECTURE.md). |
+
+### 8. Every word can be activated, not just tapped
+
+A word is announced to assistive technology as a button and carries a press
+action. `onTapGesture` alone does not: a gesture is invisible to the
+accessibility system, so a token with the button trait and no
+`accessibilityAction` claims to be a control that cannot be operated.
+VoiceOver would read the text aloud and be unable to look anything up, which
+is the whole app.
+
+*Enforced by:* the running app reporting `AXPress` among a token's actions.
 
 ## Tap targets are the size of the words
 
