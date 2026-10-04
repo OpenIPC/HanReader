@@ -80,41 +80,11 @@ public struct DSLFileSet: Hashable, Sendable {
         let header = try DSLHeader.read(from: DSLFileBytes(url: url))
 
         if !header.includes.isEmpty {
-            var files = [url.standardizedFileURL]
-            var visited: Set<URL> = [url.standardizedFileURL]
-            var diagnostics: [DSLDiagnostic] = []
-            var queue = header.includes.map { (parent: url, name: $0) }
-
-            while !queue.isEmpty {
-                guard files.count < fileLimit else {
-                    // Returning 64 volumes of a 65-volume dictionary as
-                    // though it were complete is the worst of the three
-                    // possible behaviours: it imports, it looks right, and the
-                    // missing volume's words simply cannot be found.
-                    diagnostics.append(DSLDiagnostic(
-                        kind: .tooManyFiles(limit: fileLimit),
-                        text: queue.map(\.name).joined(separator: ", "),
-                    ))
-                    break
-                }
-                let (parent, name) = queue.removeFirst()
-                let target = parent.deletingLastPathComponent()
-                    .appendingPathComponent(name)
-                    .standardizedFileURL
-                guard fileManager.fileExists(atPath: target.path) else {
-                    diagnostics.append(DSLDiagnostic(kind: .missingInclude(name), text: name))
-                    continue
-                }
-                guard visited.insert(target).inserted else { continue }
-                files.append(target)
-                let nested = try DSLHeader.read(from: DSLFileBytes(url: target))
-                queue += nested.includes.map { (parent: target, name: $0) }
-            }
-            return Self(
-                files: files,
+            return try following(
+                header.includes,
+                from: url,
                 header: header,
-                discovery: .includeDirectives,
-                diagnostics: diagnostics,
+                fileManager: fileManager,
             )
         }
 
@@ -136,6 +106,57 @@ public struct DSLFileSet: Hashable, Sendable {
                     text: url.lastPathComponent,
                 )]
                 : [],
+        )
+    }
+
+    /// Walks the `#INCLUDE` graph breadth-first from the master file.
+    ///
+    /// A visited set rather than a depth limit, so a cycle cannot loop; the
+    /// file limit is a separate guard against a pathological file, and
+    /// reaching it is reported rather than hidden.
+    private static func following(
+        _ includes: [String],
+        from url: URL,
+        header: DSLHeader,
+        fileManager: FileManager,
+    ) throws
+        -> Self
+    {
+        var files = [url.standardizedFileURL]
+        var visited: Set<URL> = [url.standardizedFileURL]
+        var diagnostics: [DSLDiagnostic] = []
+        var queue = includes.map { (parent: url, name: $0) }
+
+        while !queue.isEmpty {
+            guard files.count < fileLimit else {
+                // Returning 64 volumes of a 65-volume dictionary as though it
+                // were complete is the worst of the three possible
+                // behaviours: it imports, it looks right, and the missing
+                // volume's words simply cannot be found.
+                diagnostics.append(DSLDiagnostic(
+                    kind: .tooManyFiles(limit: fileLimit),
+                    text: queue.map(\.name).joined(separator: ", "),
+                ))
+                break
+            }
+            let (parent, name) = queue.removeFirst()
+            let target = parent.deletingLastPathComponent()
+                .appendingPathComponent(name)
+                .standardizedFileURL
+            guard fileManager.fileExists(atPath: target.path) else {
+                diagnostics.append(DSLDiagnostic(kind: .missingInclude(name), text: name))
+                continue
+            }
+            guard visited.insert(target).inserted else { continue }
+            files.append(target)
+            let nested = try DSLHeader.read(from: DSLFileBytes(url: target))
+            queue += nested.includes.map { (parent: target, name: $0) }
+        }
+        return Self(
+            files: files,
+            header: header,
+            discovery: .includeDirectives,
+            diagnostics: diagnostics,
         )
     }
 
