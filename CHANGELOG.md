@@ -36,5 +36,10 @@ it needs to read like release notes rather than a commit log.
 - Layered `.xcconfig` build settings with an optional per-machine
   `Local.xcconfig`, so the repository contains no team identifier and forks
   build without one.
+- Pinyin engine: tone placement, conversion between CC-CEDICT's numeric form
+  and display diacritics in both directions, parsing of the pinyin field
+  including its separators and literals, and syllabification of run-together
+  readings so the same word matches across dictionaries that spell it
+  differently.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main

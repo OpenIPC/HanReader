@@ -60,6 +60,12 @@ disabled_rules:
   # enabled the two tools contradict each other: `make format` adds the commas
   # and `make lint` then rejects them.
   - trailing_comma
+  # Same reason: SwiftFormat owns brace placement, and puts the brace on its
+  # own line after a wrapped multi-clause condition or a wrapped return type --
+  # which is idiomatic, and which opening_brace rejects. Two tools enforcing
+  # the same thing differently makes both untrustworthy, so formatting rules
+  # belong to the formatter.
+  - opening_brace
 
 line_length:
   warning: 100
