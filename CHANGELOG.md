@@ -82,6 +82,13 @@ it needs to read like release notes rather than a commit log.
 - [Docs/fidelity.md](Docs/fidelity.md), which states behaviourally what
   "faithful to the prototype" means across two platforms, and names the test
   that enforces each part.
+- Pinyin for the words on the page, looked up whole where the dictionary
+  knows a word and assembled character by character where it does not.
+  Readings the dictionary could not settle — a word with several
+  pronunciations, or one put together from its characters — are drawn more
+  faintly, so it is visible which annotations are guesses.
+- Reader preferences that persist: text size, word spacing, whether a tap
+  speaks the word.
 - Text import that reads the files Chinese text actually comes in: UTF-8,
   UTF-16 and, crucially, GB18030 and Big5. The encoding is detected rather
   than assumed, and when a file cannot be identified the reader is shown a
