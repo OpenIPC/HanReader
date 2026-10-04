@@ -102,7 +102,7 @@ struct ReaderLayoutRenderTests {
     /// reserving its width is visible in the token's own size. Without a case
     /// like this every assertion about reservation is vacuous: most readings
     /// are narrower than the characters they sit above.
-    private let overwideReading = TokenReading(display: "zhōngguórénmín", isComposed: false)
+    private let overwideReading = TokenReading(display: "zhōngguórénmín", source: .dictionary)
 
     // MARK: - The token's box never changes size
 

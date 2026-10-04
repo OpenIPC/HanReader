@@ -17,10 +17,12 @@ nonisolated enum ReaderColor {
     static let text = Color.primary
     /// Ruby pinyin that came from the dictionary for this exact word.
     static let ruby = Color.secondary
-    /// Ruby pinyin composed character by character, which is an approximation
-    /// and will be wrong for heteronyms. Rendered more faintly so the reader
-    /// can tell the difference without being told.
-    static let composedRuby = Color.secondary.opacity(0.65)
+    /// Ruby pinyin the dictionary could not settle: assembled character by
+    /// character, or chosen between several readings by rule. Both are
+    /// approximations that will be wrong for heteronyms, so both render more
+    /// faintly — the reader can see which annotations were vouched for
+    /// without being told in a release note that some of them are guesses.
+    static let approximateRuby = Color.secondary.opacity(0.65)
     /// Punctuation and whitespace, which are never looked up.
     static let inertText = Color.primary.opacity(0.75)
 

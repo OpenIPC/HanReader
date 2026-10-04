@@ -268,3 +268,11 @@ extension Array {
         }
     }
 }
+
+/// A compiled dictionary is a dictionary to look words up in.
+///
+/// Declared here rather than on the protocol's own side because the protocol
+/// lives in `HanReaderCore`, which knows nothing about storage. The two
+/// methods already existed with exactly these signatures — the conformance
+/// only says out loud that this is what they are for.
+extension DictionaryContainer: DictionaryLookup {}

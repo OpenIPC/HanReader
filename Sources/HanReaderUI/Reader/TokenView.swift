@@ -95,7 +95,11 @@ struct TokenView: View {
         if let reading {
             Text(verbatim: reading.display)
                 .font(ReaderFont.ruby(style))
-                .foregroundStyle(reading.isComposed ? ReaderColor.composedRuby : ReaderColor.ruby)
+                .foregroundStyle(
+                    reading.source.isApproximate
+                        ? ReaderColor.approximateRuby
+                        : ReaderColor.ruby,
+                )
                 .lineLimit(1)
                 .fixedSize()
                 .opacity(emphasis == .plain ? 0 : 1)
