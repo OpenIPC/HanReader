@@ -41,5 +41,8 @@ it needs to read like release notes rather than a commit log.
   including its separators and literals, and syllabification of run-together
   readings so the same word matches across dictionaries that spell it
   differently.
+- CC-CEDICT parser and the dictionary model, with senses, cross-references
+  extracted from gloss text, and entries keyed by headword *and* reading so
+  that words with several pronunciations keep all of them.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main
