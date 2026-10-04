@@ -86,9 +86,6 @@ nonisolated enum ReaderMetrics {
     static let detailHeadwordWidth = 110.0
     /// Width of the library sidebar on a regular-width layout.
     static let sidebarWidth = 260.0
-    /// The reading column stops widening here. Beyond roughly this width a
-    /// line holds too many characters to track back to the start of the next.
-    static let readingColumnMaxWidth = 720.0
     /// Padding around the reading column.
     static let readingColumnPadding = 24.0
     /// Minimum hit target. Apple's guideline is 44pt, and a tapped word is

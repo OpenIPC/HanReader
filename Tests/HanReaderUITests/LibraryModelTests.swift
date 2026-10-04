@@ -96,6 +96,48 @@ struct LibraryModelTests {
         #expect(item.characterCount == 4000)
     }
 
+    // MARK: - Reopening
+
+    /// The library recorded which text was open and nothing read it back, so
+    /// every launch asked the reader to choose a text with one text in the
+    /// list.
+    @Test("The text last read is the one to reopen")
+    func restoresTheLastRead() async throws {
+        let services = try AppServices.inMemory()
+        let model = LibraryModel(services: services)
+        guard case let .imported(first) = await model.importText(title: "A", content: "一"),
+              case let .imported(second) = await model.importText(title: "B", content: "二")
+        else {
+            Issue.record("import failed")
+            return
+        }
+
+        // Opened out of import order, so this cannot pass by accident: the
+        // newer import is the older read.
+        try await services.library.markOpened(second, at: .now.addingTimeInterval(-60))
+        try await services.library.markOpened(first)
+        await model.load()
+
+        #expect(model.mostRecentlyOpened?.id == first)
+    }
+
+    /// A fresh library opens nothing. Falling back to the newest *import*
+    /// would open a document the reader has never seen, which is a guess
+    /// rather than a restore.
+    @Test("A library nothing has been read from reopens nothing")
+    func nothingToRestore() async throws {
+        let model = try makeModel()
+        _ = await model.importText(title: "A", content: "一")
+        #expect(model.mostRecentlyOpened == nil)
+    }
+
+    @Test("An empty library reopens nothing")
+    func emptyRestoresNothing() async throws {
+        let model = try makeModel()
+        await model.load()
+        #expect(model.mostRecentlyOpened == nil)
+    }
+
     // MARK: - Titles
 
     @Test("A title comes from the file name", arguments: [

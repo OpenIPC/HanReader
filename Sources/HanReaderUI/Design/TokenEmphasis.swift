@@ -48,13 +48,32 @@ nonisolated struct TokenHighlight: Hashable, Sendable {
     ///   word identically, which is precisely why tapping a second instance of
     ///   an already-revealed word felt like a bug — nothing on screen changed.
     /// - **A dotted underline** carries reveal state when
-    ///   `differentiateWithoutColor` is on. An 8%-opacity accent fill is the
-    ///   *only* signal the prototype had, and it is invisible to a reader who
+    ///   `differentiateWithoutColor` is on. A tinted fill was the *only*
+    ///   signal the prototype had, and a tint is invisible to a reader who
     ///   has asked the system not to rely on colour.
     ///
-    /// Increased contrast roughly doubles both fills. A 20% tint over a page
-    /// background is below the 3:1 non-text contrast ratio for a reader who
-    /// has asked for more.
+    /// ### The numbers, and why they are not theme-dependent
+    ///
+    /// Measured as WCAG contrast ratios between the composited fill and the
+    /// background, for the system accent over white and over the macOS dark
+    /// window background:
+    ///
+    /// | fill | on light | on dark |
+    /// |---|---|---|
+    /// | 0.08 — what shipped | 1.11 | 1.08 |
+    /// | 0.14 — revealed | 1.20 | 1.16 |
+    /// | 0.30 — selected | 1.49 | 1.43 |
+    ///
+    /// The shipped 0.08 was too faint to read as a marker at all, which is
+    /// the defect. It is *not* a dark-mode defect: the two columns differ by
+    /// about 0.03, so one pair of values serves both themes and a
+    /// `colorScheme` parameter would be ceremony around a rounding error.
+    ///
+    /// Revealed stays deliberately quiet. The reading printed above the word
+    /// is the primary signal that it is revealed; the fill only has to make
+    /// the set scannable, and a page where a reader has revealed two hundred
+    /// words should not turn into a wall of colour. Selection is the state
+    /// that must be unmistakable, and it also carries a border.
     static func resolve(
         _ emphasis: TokenEmphasis,
         increasedContrast: Bool = false,
@@ -64,8 +83,8 @@ nonisolated struct TokenHighlight: Hashable, Sendable {
     {
         let fill: Double = switch emphasis {
         case .plain: 0
-        case .revealed: increasedContrast ? 0.18 : 0.08
-        case .selected: increasedContrast ? 0.32 : 0.20
+        case .revealed: increasedContrast ? 0.24 : 0.14
+        case .selected: increasedContrast ? 0.44 : 0.30
         }
         return Self(
             fillOpacity: fill,

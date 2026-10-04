@@ -57,6 +57,18 @@ final class LibraryModel {
         self.services = services
     }
 
+    /// The text the reader was last in, if there is one.
+    ///
+    /// Only a text that has actually been opened counts. Falling back to the
+    /// most recently *imported* one would mean a fresh library opens a
+    /// document the reader has never seen, which is a guess rather than a
+    /// restore.
+    var mostRecentlyOpened: LibraryListItem? {
+        items
+            .filter { $0.lastOpenedAt != nil }
+            .max { ($0.lastOpenedAt ?? .distantPast) < ($1.lastOpenedAt ?? .distantPast) }
+    }
+
     func load() async {
         loadGeneration += 1
         let generation = loadGeneration
