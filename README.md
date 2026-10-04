@@ -102,7 +102,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M1** — package skeleton, toolchain bootstrap, CI green on both platforms
 - [ ] **M2** — pinyin engine, CC-CEDICT parser, database and migrations
 - [x] **M3** — dictionary pipeline and zero-setup first launch
-- [ ] **M4** — word segmentation and the line-breaking core
+- [x] **M4** — word segmentation and the line-breaking core
 - [ ] **M5** — **the macOS reader: first usable version**
 - [ ] **M6** — BKRS DSL import
 - [ ] **M7** — audio playback
