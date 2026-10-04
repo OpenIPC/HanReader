@@ -181,7 +181,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .tools
-          key: tools-${{ runner.os }}-${{ hashFiles('Scripts/tools.lock') }}
+          # bootstrap.sh is in the key as well as tools.lock: it decides how
+          # tools are laid out in .tools, so a change to it invalidates the
+          # cache contents even when no version moved. Omitting it meant a
+          # stale cache restored an old XcodeGen symlink and silently
+          # reintroduced a bug that had already been fixed.
+          key: tools-${{ runner.os }}-${{ hashFiles('Scripts/tools.lock', 'Scripts/bootstrap.sh') }}
 
       - name: Install pinned tooling
         run: ./Scripts/bootstrap.sh
@@ -423,7 +428,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .tools
-          key: tools-${{ runner.os }}-${{ hashFiles('Scripts/tools.lock') }}
+          # bootstrap.sh is in the key as well as tools.lock: it decides how
+          # tools are laid out in .tools, so a change to it invalidates the
+          # cache contents even when no version moved. Omitting it meant a
+          # stale cache restored an old XcodeGen symlink and silently
+          # reintroduced a bug that had already been fixed.
+          key: tools-${{ runner.os }}-${{ hashFiles('Scripts/tools.lock', 'Scripts/bootstrap.sh') }}
 
       - name: Generate the Xcode project
         run: make generate
@@ -448,8 +458,15 @@ jobs:
           plist="$app/Contents/Info.plist"; [ -f "$plist" ] || plist="$app/Info.plist"
           id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")
           version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")
-          echo "$app -> $id $version"
+          expected=$(grep -oE '^HANREADER_VERSION = .*' Apps/Shared/Config/Base.xcconfig \
+                     | sed -E 's/^HANREADER_VERSION = *//')
+          echo "$app -> $id $version (expected version $expected)"
           [ "$id" = "org.openipc.hanreader" ] || { echo "::error::unexpected bundle id $id"; exit 1; }
+          # Assert the version too. The hygiene job checks source against
+          # xcconfig; this checks that what was actually built matches, which
+          # catches the target's own setting diverging from the config.
+          [ "$version" = "$expected" ] \
+            || { echo "::error::bundle version $version does not match HANREADER_VERSION $expected"; exit 1; }
 
   required-checks:
     # The single required status check for branch protection. Adding or renaming
