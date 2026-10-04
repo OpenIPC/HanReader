@@ -27,24 +27,21 @@ struct Dictgen: AsyncParsableCommand {
         commandName: "hanreader-dictgen",
         abstract: "Compile a source dictionary into a HanReader dictionary container.",
         discussion: """
-        The cedict and dsl subcommands arrive in milestones M3 and M6 \
-        respectively. This build exists so that the dictionary pipeline's \
-        wiring -- package graph, build plugin, and CI invocation -- can be \
-        verified end to end before there is a parser behind it.
+        Run at build time rather than on first launch: parsing the full \
+        CC-CEDICT takes around 2.6 seconds, which would nearly exhaust a \
+        three-second first-launch budget before a single row was written. The \
+        repository keeps the reviewable .u8 text and the app ships a database \
+        it only has to open.
+
+        The dsl subcommand, for ABBYY DSL dictionaries such as BKRS, arrives \
+        in milestone M6.
         """,
         version: HanReaderCore.version,
+        subcommands: [CompileCEDICT.self, VerifyDictionary.self],
     )
 
     func run() async throws {
-        // Touching a symbol from each dependency keeps the executable's link
-        // graph honest: drop one from Package.swift and this stops compiling.
-        let linked = [
-            "HanReaderCore \(HanReaderCore.version)",
-            "HanReaderPersistence \(HanReaderPersistence.coreVersion)",
-            "HanReaderDictionaryImport \(HanReaderDictionaryImport.linkedVersions.count) deps",
-        ]
-        print("hanreader-dictgen \(HanReaderCore.version) (scaffold)")
-        print("linked: \(linked.joined(separator: ", "))")
-        print("Dictionary subcommands arrive in milestone M3 (CC-CEDICT) and M6 (DSL).")
+        print("hanreader-dictgen \(HanReaderCore.version)")
+        print("Run `hanreader-dictgen cedict --help` to compile a dictionary.")
     }
 }

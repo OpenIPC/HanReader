@@ -36,7 +36,7 @@ public struct Headword: Hashable, Sendable {
 /// gloss in eleven contains one. The range is kept so the UI can make just
 /// that span tappable rather than linkifying the whole gloss or, worse,
 /// showing the raw markup.
-public struct CrossReference: Hashable, Sendable {
+public struct CrossReference: Hashable, Sendable, Codable {
     public let simplified: String
     public let traditional: String?
     /// The reading as written in the reference, if it carried one.
@@ -54,7 +54,7 @@ public struct CrossReference: Hashable, Sendable {
 }
 
 /// One gloss: a line of meaning, plus any references found inside it.
-public struct Gloss: Hashable, Sendable {
+public struct Gloss: Hashable, Sendable, Codable {
     /// Display text, with cross-reference markup already resolved to the
     /// simplified form so it reads as prose.
     public let text: String
@@ -72,7 +72,7 @@ public struct Gloss: Hashable, Sendable {
 /// says "variant of 妳" is a poor choice for the one-line summary in the
 /// reader's detail panel, and the UI needs to be able to prefer a real
 /// definition when one exists.
-public enum SenseKind: UInt8, Sendable, Hashable {
+public enum SenseKind: UInt8, Sendable, Hashable, Codable {
     case definition
     /// Points at another entry: `variant of`, `see also`, `abbr. for`.
     case reference
@@ -81,7 +81,7 @@ public enum SenseKind: UInt8, Sendable, Hashable {
 }
 
 /// One numbered sense of an entry.
-public struct Sense: Hashable, Sendable, Identifiable {
+public struct Sense: Hashable, Sendable, Identifiable, Codable {
     public let id: Int
     public let kind: SenseKind
     public let gloss: Gloss
