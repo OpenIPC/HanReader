@@ -200,6 +200,111 @@ struct SystemTextDecoderTests {
         #expect(worst > 0.5, "margin got suspiciously large; re-measure before trusting it")
     }
 
+    // MARK: - UTF-16 without a mark
+
+    /// An unmarked UTF-16 file is not auto-detected, and that is a decision
+    /// rather than a gap — see `TextEncodingDetector.detectionOrder`. Adding
+    /// little-endian to the order makes every unmarked big-endian file import
+    /// as silent mojibake, because byte-swapped text decodes into perfectly
+    /// ordinary CJK; adding big-endian swaps which one breaks.
+    ///
+    /// What is guaranteed instead, and asserted here: the reader is asked,
+    /// and the right answer is among the choices with its text already
+    /// readable.
+    @Test("An unmarked UTF-16 file is offered rather than guessed", arguments: [
+        (SourceTextEncoding.utf16LittleEndian, String.Encoding.utf16LittleEndian),
+        (.utf16BigEndian, .utf16BigEndian),
+    ])
+    func unmarkedUtf16GoesToThePicker(
+        expected: SourceTextEncoding,
+        foundation: String.Encoding,
+    ) throws {
+        let text = "Chapter 1. 中国人民解放军在北京举行了阅兵式。 (The parade, 2026.)"
+        let data = try #require(text.data(using: foundation))
+        // Checked literally rather than through the detector's own
+        // byte-order-mark reader, so the fixture is verified independently of
+        // the thing under test.
+        #expect(!data.starts(with: [0xFF, 0xFE]), "the fixture has a mark")
+        #expect(!data.starts(with: [0xFE, 0xFF]), "the fixture has a mark")
+
+        #expect(TextEncodingDetector.detect(data, using: decoder) == nil)
+
+        let previews = TextEncodingDetector.previews(of: data, using: decoder)
+        let utf16 = try #require(previews.first { $0.encoding == expected })
+        #expect(utf16.preview == text)
+    }
+
+    /// The trade that settles it, as an executable statement: with
+    /// little-endian in the detection order, this big-endian file would be
+    /// claimed by it and imported as mojibake rather than queried.
+    @Test("Byte-swapped UTF-16 decodes into plausible nonsense")
+    func byteSwappedUtf16LooksLikeText() throws {
+        let data = try #require(simplified.data(using: .utf16BigEndian))
+        let swapped = try #require(decoder.decode(data, as: .utf16LittleEndian))
+
+        #expect(swapped != simplified)
+        // Plausible enough to pass the floor, which is exactly the problem:
+        // nothing downstream could tell it was wrong.
+        #expect(TextPlausibility.score(swapped) >= TextEncodingDetector.plausibilityFloor)
+    }
+
+    /// Why UTF-16 can be tried at all without ruining the binary check, and
+    /// the measurement that settled it: real binary is full of unpaired
+    /// surrogates, which strict UTF-16 decoding refuses outright.
+    ///
+    /// This is not theoretical caution. UTF-16 reinterprets any even-length
+    /// byte run as characters, so adding it to the detection order looked
+    /// like it would let a non-text file through — and with a *synthetic*
+    /// fixture, a ramp of low bytes that never forms a surrogate, it did:
+    /// 0.92 against a floor of 0.9. No real file looks like that.
+    @Test("Real binary is refused by every candidate", arguments: [
+        ("png", [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] as [UInt8]),
+        ("zip", [0x50, 0x4B, 0x03, 0x04]),
+        ("pdf", Array("%PDF-1.7\n".utf8)),
+    ])
+    func binaryIsRefused(name: String, header: [UInt8]) {
+        var state: UInt32 = 0x1234_5678
+        let noise = (0 ..< 256).map { _ -> UInt8 in
+            state = state &* 1_664_525 &+ 1_013_904_223
+            return UInt8((state >> 16) & 0xFF)
+        }
+        let data = Data(header + noise)
+        #expect(TextEncodingDetector.detect(data, using: decoder) == nil, "\(name) was accepted")
+    }
+
+    // MARK: - Previews on a large file
+
+    /// A preview decodes a bounded sample, so offering five candidates for a
+    /// novel does not mean decoding the novel five times.
+    @Test("Previews do not decode the whole file")
+    func previewsAreBounded() throws {
+        let long = String(repeating: "中国人民解放军在北京举行了阅兵式。", count: 4000)
+        let data = Data(long.utf8)
+        #expect(data.count > TextEncodingDetector.previewByteLimit * 4)
+
+        let previews = TextEncodingDetector.previews(of: data, using: decoder)
+        let utf8 = try #require(previews.first { $0.encoding == .utf8 })
+        #expect(utf8.preview.count == 400)
+        #expect(utf8.preview == String(long.prefix(400)))
+    }
+
+    /// A fixed byte count almost always cuts through the middle of a
+    /// character. Each of these lengths puts the cut at a different offset
+    /// within a three-byte sequence, so one of them lands mid-character
+    /// whatever the limit happens to be.
+    @Test("A sample cut mid-character still previews", arguments: [0, 1, 2, 3])
+    func previewsSurviveACutMidCharacter(extra: Int) throws {
+        let unit = "中" // three bytes in UTF-8
+        let repeats = TextEncodingDetector.previewByteLimit / 3 + 100
+        let text = String(repeating: unit, count: repeats)
+        let data = Data(text.utf8).prefix(TextEncodingDetector.previewByteLimit + extra)
+
+        let previews = TextEncodingDetector.previews(of: Data(data), using: decoder)
+        let utf8 = try #require(previews.first { $0.encoding == .utf8 })
+        #expect(utf8.preview.allSatisfy { $0 == "中" })
+        #expect(!utf8.preview.isEmpty)
+    }
+
     /// The honest limit. Detection is a statistical property of running text,
     /// so a short enough fragment can land above the floor by luck — which is
     /// why the picker exists and is offered whenever the reader disagrees.

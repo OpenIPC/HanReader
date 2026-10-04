@@ -9,6 +9,26 @@ import Testing
 struct FileIngestTests {
     private let simplified = "中国人民解放军在北京举行了阅兵式。"
 
+    /// A PNG header followed by deterministic pseudo-random bytes.
+    ///
+    /// Realistic on purpose, and the realism is the point. An earlier version
+    /// of this used a ramp of low bytes, which is not what any file looks
+    /// like: it never produces an unpaired surrogate, so it decoded cleanly
+    /// as UTF-16 and scored 0.92 — above the floor. Actual binary (PNG, ZIP,
+    /// PDF, random bytes) is full of unpaired surrogates and fails UTF-16
+    /// outright, which is most of why UTF-16 is safe to try as a last resort.
+    ///
+    /// Pseudo-random rather than random, so a failure here is reproducible
+    /// instead of appearing once a month in CI.
+    nonisolated static let pngLikeBytes: Data = {
+        var state: UInt32 = 0x1234_5678
+        let noise = (0 ..< 256).map { _ -> UInt8 in
+            state = state &* 1_664_525 &+ 1_013_904_223
+            return UInt8((state >> 16) & 0xFF)
+        }
+        return Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] + noise)
+    }()
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("hanreader-tests-\(UUID().uuidString)", isDirectory: true)
@@ -51,13 +71,7 @@ struct FileIngestTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        // A run of control bytes: GB18030 decodes it, and the result is
-        // obviously not text.
-        let url = try write(
-            Data((0 ..< 64).map { UInt8($0 % 24) }),
-            named: "binary.txt",
-            in: directory,
-        )
+        let url = try write(Self.pngLikeBytes, named: "binary.png", in: directory)
 
         #expect(throws: TextImportError.self) {
             try FileIngest.readText(at: url)
@@ -65,8 +79,10 @@ struct FileIngestTests {
         do {
             _ = try FileIngest.readText(at: url)
         } catch let TextImportError.undeterminedEncoding(previews) {
-            #expect(!previews.isEmpty)
-            #expect(previews.allSatisfy { $0.plausibility < 1 })
+            // Nothing decoded it at all, so there is nothing to offer -- and
+            // an empty picker is the honest answer for a PNG. The populated
+            // case is covered by the detector's own tests.
+            #expect(previews.isEmpty)
         }
     }
 
@@ -181,6 +197,29 @@ struct FileIngestTests {
         let url = try write(Data("x".utf8), named: "a.m4a", in: source)
         _ = try FileIngest.copy(url, into: destination)
         #expect(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    /// The collision is detected by the file system rather than by checking
+    /// first, so there is no window between the check and the copy for
+    /// another import to take the name. Hard to provoke deterministically —
+    /// what is checked here is that an already-taken name is stepped over
+    /// rather than failing, which is the behaviour the race would otherwise
+    /// break.
+    @Test("A name taken between the check and the copy is stepped over")
+    func copyStepsOverAnExistingName() throws {
+        let source = try temporaryDirectory()
+        let destination = try temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: destination)
+        }
+
+        let url = try write(Data("new".utf8), named: "audio.m4a", in: source)
+        // Both names already taken, as if two other imports had just won.
+        _ = try write(Data("other".utf8), named: "audio.m4a", in: destination)
+        _ = try write(Data("other".utf8), named: "audio-2.m4a", in: destination)
+
+        #expect(try FileIngest.copy(url, into: destination) == "audio-3.m4a")
     }
 
     // MARK: - Security scope

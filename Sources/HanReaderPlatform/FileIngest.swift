@@ -85,6 +85,13 @@ public enum FileIngest {
     /// prototype's stored audio paths broke the first time anyone restored a
     /// backup — on a device, months later, with nothing to point at the
     /// cause.
+    ///
+    /// Names are made unique by *attempting* the copy rather than by checking
+    /// first and then copying. Checking first leaves a window between the
+    /// check and the copy in which another import can take the same name, and
+    /// the loser of that race fails with "file exists" even though a numbered
+    /// name was free. Letting `copyItem` be the thing that detects the
+    /// collision closes the window, because the file system decides.
     public static func copy(
         _ url: URL,
         into directory: URL,
@@ -93,40 +100,44 @@ public enum FileIngest {
         -> String
     {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = uniqueName(for: url.lastPathComponent, in: directory, fileManager: fileManager)
-        let destination = directory.appendingPathComponent(name)
 
-        try withAccess(to: url) { source in
-            // Replacing rather than failing would silently discard whatever
-            // was there, and `uniqueName` has already guaranteed there is
-            // nothing to replace.
-            try fileManager.copyItem(at: source, to: destination)
+        let original = url.lastPathComponent
+        let base = (original as NSString).deletingPathExtension
+        let pathExtension = (original as NSString).pathExtension
+
+        return try withAccess(to: url) { source in
+            for attempt in 1 ... maximumNameAttempts {
+                let name = attempt == 1 ? original : numbered(base, pathExtension, attempt)
+                do {
+                    try fileManager.copyItem(
+                        at: source,
+                        to: directory.appendingPathComponent(name),
+                    )
+                    return name
+                } catch CocoaError.fileWriteFileExists {
+                    continue
+                }
+            }
+            throw TextImportError.cannotFindAFreeName(original)
         }
-        return name
     }
 
-    /// A name no existing file in `directory` already uses.
+    /// How many numbered names to try before giving up.
     ///
-    /// Two texts can perfectly well be given audio files both called
-    /// `audio.m4a`; the second must not overwrite the first.
-    private static func uniqueName(
-        for name: String,
-        in directory: URL,
-        fileManager: FileManager,
+    /// A bound rather than an unbounded loop: a directory that somehow
+    /// refuses every name should surface as an error, not as a process
+    /// spinning on the file system.
+    private static let maximumNameAttempts = 1000
+
+    private static func numbered(
+        _ base: String,
+        _ pathExtension: String,
+        _ counter: Int,
     )
         -> String
     {
-        let base = (name as NSString).deletingPathExtension
-        let suffix = (name as NSString).pathExtension
-        var candidate = name
-        var counter = 2
-
-        while fileManager.fileExists(atPath: directory.appendingPathComponent(candidate).path) {
-            let numbered = "\(base)-\(counter)"
-            candidate = suffix.isEmpty ? numbered : "\(numbered).\(suffix)"
-            counter += 1
-        }
-        return candidate
+        let stem = "\(base)-\(counter)"
+        return pathExtension.isEmpty ? stem : "\(stem).\(pathExtension)"
     }
 }
 
@@ -137,6 +148,8 @@ public enum TextImportError: Error, Sendable, Equatable, LocalizedError {
     case undeterminedEncoding([EncodingPreview])
     /// An encoding the reader chose explicitly could not read the file.
     case cannotDecode(SourceTextEncoding)
+    /// Every candidate name in the destination directory was taken.
+    case cannotFindAFreeName(String)
 
     public var errorDescription: String? {
         switch self {
@@ -148,6 +161,8 @@ public enum TextImportError: Error, Sendable, Equatable, LocalizedError {
             "HanReader could not work out this file's text encoding."
         case let .cannotDecode(encoding):
             "This file is not valid \(encoding.displayName) text."
+        case let .cannotFindAFreeName(name):
+            "There are already too many files called \(name)."
         }
     }
 }

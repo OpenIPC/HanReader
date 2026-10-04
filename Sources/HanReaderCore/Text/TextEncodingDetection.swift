@@ -134,7 +134,38 @@ public struct EncodingPreview: Sendable, Hashable, Identifiable {
 /// larger share of what gets imported.
 public enum TextEncodingDetector {
     /// Encodings tried, in order, when there is no byte-order mark.
+    ///
+    /// UTF-16 is deliberately **not** here, which looks like an omission
+    /// because the decoder supports it. It was added during review and taken
+    /// out again after measuring, and the measurements are the argument:
+    ///
+    /// - UTF-16 reinterprets any even-length run of bytes as characters, and
+    ///   byte-swapped text decodes into perfectly ordinary CJK. So putting
+    ///   little-endian in the list means every unmarked **big**-endian file is
+    ///   claimed by it and imported as silent mojibake — replacing a case
+    ///   that asks the reader with a case that is quietly wrong.
+    /// - Putting big-endian first merely swaps which one breaks. Nothing in
+    ///   the content distinguishes them without bespoke heuristics about
+    ///   where the NUL bytes fall.
+    /// - The case it would fix is small to begin with. A UTF-16 file
+    ///   essentially always carries a mark — the format all but requires one
+    ///   — and `byteOrderMark(in:)` handles those conclusively, before any of
+    ///   this. And for CJK-heavy content GB18030 often produces plausible
+    ///   mojibake and claims the file anyway, so the fix would not even be
+    ///   reliable for the case it targets.
+    ///
+    /// Trading a rare file that asks a question for a rarer file that is
+    /// silently wrong is a bad trade, so an unmarked UTF-16 file goes to the
+    /// picker — which offers it, decoded correctly, as one of the choices.
     public static let detectionOrder: [SourceTextEncoding] = [.utf8, .gb18030, .big5]
+
+    /// How many bytes a preview decodes.
+    ///
+    /// Generous for 400 characters in any encoding here — Chinese costs at
+    /// most three bytes a character — and small enough that offering five
+    /// candidates for a ten-megabyte novel does not mean decoding it five
+    /// times to show a paragraph of each.
+    public static let previewByteLimit = 8192
 
     /// How text-like a decode must look to be accepted without asking.
     ///
@@ -192,6 +223,15 @@ public enum TextEncodingDetector {
     /// reshuffle itself between two files — and because the scores of two
     /// plausible CJK decodes are close enough that ordering by them would be
     /// noise presented as a recommendation.
+    ///
+    /// Only the first `previewByteLimit` bytes are decoded. The reader is
+    /// being shown a paragraph, so decoding a whole novel five times over to
+    /// produce it would be work with no visible result. Two consequences
+    /// worth knowing: `plausibility` here describes the sample rather than
+    /// the file, and an encoding that would fail somewhere in the body can
+    /// still appear in the list. Neither matters for choosing — the choice is
+    /// made by looking — and the import that follows decodes the whole file
+    /// and fails properly if it cannot.
     public static func previews(
         of data: Data,
         using decoder: some TextDecoding,
@@ -207,7 +247,7 @@ public enum TextEncodingDetector {
 
         return ordered.compactMap { encoding in
             guard seen.insert(encoding).inserted,
-                  let text = decoder.decode(data, as: encoding)
+                  let text = decodeSample(data, as: encoding, using: decoder)
             else { return nil }
             return EncodingPreview(
                 encoding: encoding,
@@ -215,6 +255,37 @@ public enum TextEncodingDetector {
                 plausibility: TextPlausibility.score(text),
             )
         }
+    }
+
+    /// Decodes the first `previewByteLimit` bytes.
+    ///
+    /// A fixed byte count almost always cuts through the middle of
+    /// something — a multi-byte UTF-8 sequence, or one half of a UTF-16 code
+    /// unit — and a strict decoder rightly refuses the result. So up to three
+    /// trailing bytes are dropped until it decodes, three being one less than
+    /// the longest UTF-8 sequence and enough to realign UTF-16 either way.
+    /// Failing all four attempts means the sample is genuinely not that
+    /// encoding.
+    ///
+    /// The trimming applies to a short file too, not only to a sampled one.
+    /// A file truncated mid-character is invalid and `detect` is right to
+    /// refuse it — but a reader staring at a half-finished download is
+    /// exactly who needs to see what it says, so the picker stays lenient
+    /// where the detector is strict.
+    private static func decodeSample(
+        _ data: Data,
+        as encoding: SourceTextEncoding,
+        using decoder: some TextDecoding,
+    )
+        -> String?
+    {
+        let length = Swift.min(data.count, previewByteLimit)
+        for trimmed in 0 ... 3 where length - trimmed > 0 {
+            if let text = decoder.decode(data.prefix(length - trimmed), as: encoding) {
+                return text
+            }
+        }
+        return nil
     }
 
     /// The encoding declared by a byte-order mark, if there is one.
