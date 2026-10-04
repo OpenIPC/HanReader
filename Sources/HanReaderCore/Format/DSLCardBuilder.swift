@@ -37,6 +37,20 @@ public struct DSLCard: Hashable, Sendable {
 /// 3. The duplication is nothing: 9,069 of 3,434,224 cards have more than
 ///    one reading.
 ///
+/// ### And one entry per spelling, for the same reason
+///
+/// A card may carry several headword lines. Each becomes its own entry over
+/// the same sense run, so every spelling the dictionary lists can be looked
+/// up. The alternative — reading the second line as the traditional form of
+/// the first — is an invention: the format says consecutive headword lines
+/// are alternative headwords for one article, and says nothing about which
+/// script they are in. Guessing would write a wrong `traditional` into the
+/// cross-dictionary merge key, and it also silently dropped every spelling
+/// after the second.
+///
+/// No card in this set has more than one headword, so nothing here changes
+/// what BKRS imports. It changes what the next dictionary imports.
+///
 /// ### The sense stack is indexed by level, not pushed and popped
 ///
 /// `[m4]` after an `[m3]` must nest under the right `[m2]`, and a card can
@@ -62,29 +76,26 @@ public struct DSLCardBuilder: Sendable {
         var assembly = SenseAssembly()
         var diagnostics: [DSLDiagnostic] = []
 
-        for line in card.body {
+        for (index, line) in card.body.enumerated() {
+            if index > 0 {
+                assembly.beginLine()
+            }
             let lexed = DSLLexer.tokens(in: line)
             diagnostics.append(contentsOf: lexed.diagnostics)
             assembly.consume(lexed.tokens)
         }
         let senses = assembly.finish()
 
-        guard let simplified = card.headwords.first else { return ([], diagnostics) }
-        let headword = Headword(
-            simplified: simplified,
-            traditional: card.headwords.dropFirst().first,
-        )
+        guard !card.headwords.isEmpty else { return ([], diagnostics) }
+        let headwords = card.headwords.map { Headword(simplified: $0, traditional: nil) }
+        let readings = Self.readings(in: card.pinyin).map { tokens(forReading: $0) }
 
-        let readings = Self.readings(in: card.pinyin)
-        guard !readings.isEmpty else {
-            return ([DictionaryEntry(headword: headword, reading: [], senses: senses)], diagnostics)
-        }
-        let entries = readings.map { reading in
-            DictionaryEntry(
-                headword: headword,
-                reading: tokens(forReading: reading),
-                senses: senses,
-            )
+        let entries = headwords.flatMap { headword in
+            readings.isEmpty
+                ? [DictionaryEntry(headword: headword, reading: [], senses: senses)]
+                : readings.map {
+                    DictionaryEntry(headword: headword, reading: $0, senses: senses)
+                }
         }
         return (entries, diagnostics)
     }

@@ -51,6 +51,37 @@ struct SenseAssembly {
 
     // MARK: - Consuming tokens
 
+    /// Joins the next body line to the one before it.
+    ///
+    /// A card's article is usually one physical line, but a line break can
+    /// fall *inside* an open `[mN]`. 乐芙兰 is the one card in 3,434,224
+    /// where it does — `[m1]Ле Блан` on one line, `(чемпион из Лиги
+    /// Легенд)[/m]` on the next — and most other DSL dictionaries write one
+    /// sense per line, where this matters far more often.
+    ///
+    /// The break is worth a space. Concatenating gives
+    /// `Ле Блан(чемпион из Лиги Легенд)`; inserting one unconditionally would
+    /// put a leading space on every sense that *is* closed at the end of its
+    /// line, which is the common case. So: a space only where there is
+    /// already text to separate.
+    mutating func beginLine() {
+        guard let tail = openText, !tail.isEmpty, !tail.hasSuffix(" ") else { return }
+        append(" ")
+    }
+
+    /// The text `append` would currently add to, mirroring its precedence.
+    /// Nil when nothing is open, so beginning a line never opens a sense.
+    private var openText: String? {
+        if let grammar {
+            return grammar
+        }
+        if let example {
+            return example
+        }
+        guard let current else { return nil }
+        return drafts[current].text
+    }
+
     mutating func consume(_ tokens: [DSLToken]) {
         for token in tokens {
             switch token {
@@ -69,6 +100,10 @@ struct SenseAssembly {
             grammar = ""
         case .example:
             example = ""
+        // A decoration can open before any `[mN]` — 479 cards do — and the
+        // offset it records is 0 either way, because a sense opened later
+        // starts empty. What matters is that `openSense` no longer throws
+        // these away, which is what lost the markup on those cards.
         case .bold:
             styleStarts[.bold] = length
         case .italic:
@@ -102,6 +137,12 @@ struct SenseAssembly {
     // MARK: - Senses
 
     private mutating func openSense(level: Int) {
+        // Whatever is still open belongs to the sense being left, so it is
+        // settled against that sense before the new one exists. Discarding it
+        // here instead is how 241 sense spans lost their emphasis and how an
+        // unclosed `[p]` could go on swallowing the *next* sense's prose.
+        settleOpenSpans()
+
         let parent = lastByLevel
             .filter { $0.key < level }
             .max { $0.key < $1.key }?
@@ -116,19 +157,44 @@ struct SenseAssembly {
         }
         lastByLevel[level] = index
         current = index
-        styleStarts.removeAll()
-        referenceStart = nil
     }
 
     /// `[/m]` ends the span, not the level.
     ///
-    /// It closes any emphasis left open inside the sense and nothing more.
+    /// It settles any emphasis left open inside the sense and nothing more.
     /// The level hierarchy outlives it — see `lastByLevel` — and text
     /// between a close and the next open stays with the sense it followed
     /// rather than being dropped.
     private mutating func closeDeepestSense() {
-        styleStarts.removeAll()
-        referenceStart = nil
+        settleOpenSpans()
+    }
+
+    /// Closes everything still open against the sense it was opened in.
+    ///
+    /// Markup in this set is not reliably balanced — 241 sense spans close
+    /// `[/m]` with a style tag still open — and the rule the importer follows
+    /// is that nothing is ever deleted. An unclosed `[i]` therefore yields the
+    /// italic run it was asking for, up to where the sense ends, rather than
+    /// text that silently lost its emphasis.
+    private mutating func settleOpenSpans() {
+        closeGrammar()
+        closeExample()
+        // `allCases` rather than the dictionary's own key order, so the runs
+        // come out in the same order on every run.
+        for style in TextStyle.allCases where styleStarts[style] != nil {
+            closeStyle(style)
+        }
+        closeReference()
+    }
+
+    /// Text outside any `[mN]` still belongs to the card, so a sense is
+    /// opened for it rather than letting it fall on the floor. Cards whose
+    /// article carries no markup at all exist, and dropping them would lose
+    /// the entry entirely.
+    private mutating func ensureSense() {
+        if current == nil {
+            openSense(level: 0)
+        }
     }
 
     // MARK: - Text
@@ -147,13 +213,7 @@ struct SenseAssembly {
             example? += text
             return
         }
-        // Text outside any `[mN]` still belongs to the card; a sense is
-        // opened for it rather than letting it fall on the floor. Cards
-        // whose body carries no markup at all exist, and dropping them
-        // would lose the entry entirely.
-        if current == nil {
-            openSense(level: 0)
-        }
+        ensureSense()
         guard let current else { return }
         drafts[current].text += text
     }
@@ -167,6 +227,14 @@ struct SenseAssembly {
         drafts[current].styles.append(StyleRun(style: style, range: start ..< end))
     }
 
+    /// A cross-reference names another headword, so the span is trimmed to
+    /// that headword.
+    ///
+    /// 21 `[ref]` spans in the set close after a space — `[ref]尽管 [/ref]` —
+    /// and a headword with a trailing space matches no entry in any
+    /// dictionary, so the reference would point nowhere. The span is trimmed
+    /// rather than only the string, so the range and the word it names cannot
+    /// disagree.
     private mutating func closeReference() {
         guard let current, let start = referenceStart else { return }
         referenceStart = nil
@@ -175,11 +243,22 @@ struct SenseAssembly {
         guard end > start,
               let range = Range(NSRange(location: start, length: end - start), in: text)
         else { return }
+
+        let span = text[range]
+        let leading = span.prefix(while: \.isWhitespace).count
+        var word = span.dropFirst(leading)
+        var trailing = 0
+        while let last = word.last, last.isWhitespace {
+            word = word.dropLast()
+            trailing += 1
+        }
+        guard !word.isEmpty else { return }
+
         drafts[current].references.append(CrossReference(
-            simplified: String(text[range]),
+            simplified: String(word),
             traditional: nil,
             reading: nil,
-            range: start ..< end,
+            range: (start + leading) ..< (end - trailing),
         ))
     }
 
@@ -189,13 +268,14 @@ struct SenseAssembly {
     /// dropped. A field marker this list has not heard of is still
     /// information the dictionary chose to print.
     private mutating func closeGrammar() {
-        defer { grammar = nil }
-        guard let text = grammar?.trimmingCharacters(in: .whitespaces), !text.isEmpty else {
-            return
-        }
-        if current == nil {
-            openSense(level: 0)
-        }
+        // Cleared before anything else can run, because `ensureSense` below
+        // leads back into `settleOpenSpans`, and a buffer still set at that
+        // point is an infinite recursion.
+        guard let raw = grammar else { return }
+        grammar = nil
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        ensureSense()
         guard let current else { return }
         if Self.partsOfSpeech.contains(text) {
             drafts[current].partOfSpeech.append(text)
@@ -205,11 +285,12 @@ struct SenseAssembly {
     }
 
     private mutating func closeExample() {
-        defer { example = nil }
-        guard let raw = example?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return }
-        if current == nil {
-            openSense(level: 0)
-        }
+        // Cleared first, for the same reason as `closeGrammar`.
+        guard let buffered = example else { return }
+        example = nil
+        let raw = buffered.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return }
+        ensureSense()
         guard let current else { return }
         drafts[current].examples.append(Self.splitExample(raw))
     }
@@ -217,22 +298,31 @@ struct SenseAssembly {
     // MARK: - Finishing
 
     mutating func finish() -> [Sense] {
+        // A card can end with markup still open — the set has two more `[mN]`
+        // opens than `[/m]` closes — so the last sense is settled here rather
+        // than relying on a close that may never arrive.
+        settleOpenSpans()
         lastByLevel.removeAll()
         current = nil
         return drafts.enumerated().map { index, draft in
+            let trimmed = Self.trim(
+                text: draft.text,
+                styles: draft.styles,
+                references: draft.references,
+            )
             var draft = draft
-            let label = Self.liftLabel(from: &draft)
+            draft.text = trimmed.text
             return Sense(
                 id: index,
                 kind: Self.kind(of: draft),
                 gloss: Gloss(
-                    text: draft.text.trimmingCharacters(in: .whitespaces),
-                    references: draft.references,
-                    styles: draft.styles,
+                    text: trimmed.text,
+                    references: trimmed.references,
+                    styles: trimmed.styles,
                 ),
                 level: draft.level,
                 parent: draft.parent,
-                label: label,
+                label: trimmed.label,
                 partOfSpeech: draft.partOfSpeech,
                 registers: draft.registers,
                 examples: draft.examples,
@@ -246,41 +336,102 @@ struct SenseAssembly {
 /// Pure functions over a sense's text, kept out of the state machine above
 /// so each can be read — and tested — without the assembly around it.
 extension SenseAssembly {
-    /// Takes the dictionary's own numbering out of the gloss.
-    ///
-    /// Left in place it appears twice — once from the dictionary and once
-    /// from whatever numbering the reader's list applies — and it stops the
-    /// gloss being usable as a one-line summary.
-    private static func liftLabel(from draft: inout Draft) -> String? {
-        let text = draft.text.trimmingCharacters(in: .whitespaces)
-        guard let match = labelPrefix(of: text) else { return nil }
-
-        let removed = draft.text.utf16.count - text.utf16.count
-            + match.utf16.count
-        draft.text = String(text.dropFirst(match.count))
-            .trimmingCharacters(in: .whitespaces)
-        draft.styles = shift(draft.styles, by: removed, limit: draft.text.utf16.count)
-        draft.references = draft.references.compactMap { reference in
-            let lower = reference.range.lowerBound - removed
-            let upper = reference.range.upperBound - removed
-            guard lower >= 0, upper <= draft.text.utf16.count, lower < upper else { return nil }
-            return CrossReference(
-                simplified: reference.simplified,
-                traditional: reference.traditional,
-                reading: reference.reading,
-                range: lower ..< upper,
-            )
-        }
-        return match.trimmingCharacters(in: .whitespaces)
+    /// What a draft's text, label and ranges become in the finished sense.
+    struct Trimmed {
+        var text: String
+        var label: String?
+        var styles: [StyleRun]
+        var references: [CrossReference]
     }
 
-    private static func shift(_ styles: [StyleRun], by offset: Int, limit: Int) -> [StyleRun] {
-        styles.compactMap { run in
-            let lower = max(0, run.range.lowerBound - offset)
-            let upper = min(limit, run.range.upperBound - offset)
-            guard lower < upper else { return nil }
-            return StyleRun(style: run.style, range: lower ..< upper)
+    /// Strips the dictionary's own numbering and the surrounding whitespace,
+    /// and moves every recorded range with the text.
+    ///
+    /// Numbering is lifted because left in place it appears twice — once from
+    /// the dictionary and once from whatever numbering the reader's list
+    /// applies — and because it stops the gloss reading as a one-line summary.
+    ///
+    /// **One place, one offset, and that is the point.** Trimming the text in
+    /// one function while the ranges were adjusted in another is how every
+    /// range in a numbered sense ended up one character to the right: the
+    /// space after `1)` was removed from the text by a second trim that the
+    /// offset arithmetic knew nothing about. Measured over the whole set,
+    /// 16,957 senses with a style run and 3,974 with a cross-reference were
+    /// affected, and a reference reaching the end of its gloss was not merely
+    /// shifted but dropped. A further 85,395 unnumbered senses — anything
+    /// whose prose follows a `[p]…[/p]`, which leaves a leading space — had
+    /// the same fault from the final trim alone.
+    ///
+    /// So the prefix is measured here, once, as it is removed: leading
+    /// whitespace, then the label, then the whitespace after the label. Every
+    /// range moves by that one number and is clamped to the result, because a
+    /// range is clamped rather than discarded — a run that overshoots by a
+    /// trimmed space is still the run the dictionary asked for.
+    static func trim(
+        text rawText: String,
+        styles: [StyleRun] = [],
+        references: [CrossReference] = [],
+    )
+        -> Trimmed
+    {
+        var removed = 0
+        var body = Substring(rawText)
+
+        let afterLeading = body.drop(while: \.isWhitespace)
+        removed += body.utf16.count - afterLeading.utf16.count
+        body = afterLeading
+
+        var label: String?
+        if let match = labelPrefix(of: String(body)) {
+            body = body.dropFirst(match.count)
+            removed += match.utf16.count
+            let afterLabel = body.drop(while: \.isWhitespace)
+            removed += body.utf16.count - afterLabel.utf16.count
+            body = afterLabel
+            label = match.trimmingCharacters(in: .whitespaces)
         }
+
+        while let last = body.last, last.isWhitespace {
+            body = body.dropLast()
+        }
+
+        let text = String(body)
+        let limit = text.utf16.count
+        return Trimmed(
+            text: text,
+            label: label,
+            styles: styles.compactMap { run in
+                guard let range = clamp(run.range, by: removed, limit: limit) else { return nil }
+                return StyleRun(style: run.style, range: range)
+            },
+            references: references.compactMap { reference in
+                guard let range = clamp(reference.range, by: removed, limit: limit) else {
+                    return nil
+                }
+                return CrossReference(
+                    simplified: reference.simplified,
+                    traditional: reference.traditional,
+                    reading: reference.reading,
+                    range: range,
+                )
+            },
+        )
+    }
+
+    /// Moves a range back by `offset` and clips it to `0..<limit`. Nil when
+    /// nothing of it survives, which is the case for a span that sat entirely
+    /// inside the lifted label.
+    private static func clamp(
+        _ range: Range<Int>,
+        by offset: Int,
+        limit: Int,
+    )
+        -> Range<Int>?
+    {
+        let lower = max(0, range.lowerBound - offset)
+        let upper = min(limit, range.upperBound - offset)
+        guard lower < upper else { return nil }
+        return lower ..< upper
     }
 
     /// `I`, `II`, `1)`, `а)` — the forms BKRS numbers senses with.
