@@ -13,9 +13,9 @@ concurrency:
 permissions:
   contents: read
 
-# The Swift build, test, lint and dictionary jobs arrive with the package
-# skeleton in milestone M1. Until then `hygiene` is the whole suite -- the point
-# of running it now is that CI which was never green is CI nobody trusts.
+# The lint, application-build and dictionary jobs arrive later in milestone M1
+# and in M3. `spm-test` is the fast lane where most of the suite will live, and
+# `linux-core` is what actually enforces the architecture -- see its comment.
 
 jobs:
   hygiene:
@@ -143,12 +143,203 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  spm-test:
+    # The fast lane: no simulator, no Xcode project, no XcodeGen. Most of the
+    # test suite will live here, and this is the job that should fail first when
+    # logic breaks.
+    name: Swift package tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select the pinned toolchain
+        # .xcode-version is the single source of truth: DEVELOPER_DIR is derived
+        # from it rather than hard-coded, so the two cannot drift apart. If the
+        # pinned Xcode is absent -- GitHub replaces patch releases in place --
+        # fail here with a readable message and the list of what is installed,
+        # rather than letting the build proceed on an unpinned compiler or die
+        # on a raw `xcodebuild` error several steps later.
+        run: |
+          set -euo pipefail
+          pinned=$(tr -d '[:space:]' < .xcode-version)
+          [ -n "$pinned" ] || { echo "::error file=.xcode-version::file is empty"; exit 1; }
+
+          dir=""
+          for candidate in "/Applications/Xcode_${pinned}.app" "/Applications/Xcode_${pinned}".*.app; do
+            if [ -d "$candidate/Contents/Developer" ]; then dir="$candidate/Contents/Developer"; break; fi
+          done
+
+          if [ -z "$dir" ]; then
+            echo "::error file=.xcode-version::Xcode $pinned is not installed on this runner."
+            echo "Available Xcode versions:"
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none found)"
+            exit 1
+          fi
+
+          echo "DEVELOPER_DIR=$dir" >> "$GITHUB_ENV"
+          echo "Selected $dir"
+
+      - name: Report toolchain and record its identity for the cache key
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          swift --version
+          # The compiler identity, not just the Xcode marketing version, so a
+          # toolchain change always invalidates the build cache.
+          swift --version 2>&1 | head -2 > .toolchain-id
+          cat .toolchain-id
+
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          # Keyed on the compiler identity as well as the dependency graph.
+          # Without the toolchain in the key, an in-place Xcode patch update
+          # restores modules built by the previous compiler, which can fail to
+          # link in confusing ways.
+          key: spm-${{ runner.os }}-${{ hashFiles('.toolchain-id') }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ hashFiles('.toolchain-id') }}-
+
+      - name: Build, treating warnings as errors
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+
+      - name: Test
+        run: swift test --skip-build
+
+  architecture:
+    # The module boundaries, checked three ways. No one of these is sufficient:
+    # a Linux build proves portability but would happily accept `import
+    # Dispatch`; an import allowlist proves the stated rule but not that the
+    # code actually compiles off-Apple; and neither notices a dependency added
+    # in Package.swift that no source file has started using yet.
+    name: Architecture boundaries
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    defaults:
+      run:
+        # Container jobs default to `sh -e`, which has neither `set -o pipefail`
+        # nor process substitution. The Swift images are Ubuntu-based, so bash
+        # is present; ask for it explicitly rather than writing POSIX-only
+        # scripts in a repo where every other job gets bash by default.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Install python3 for the manifest check
+        # The official Swift images are slim and ship no Python. The manifest
+        # check parses `swift package dump-package`, which is far more legible
+        # in Python than in shell, so spend ~15s on the package rather than
+        # hand-rolling JSON parsing in bash.
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3
+          python3 --version
+
+      - name: HanReaderCore imports only Foundation
+        run: |
+          set -euo pipefail
+          # Allowlist, not a denylist. "No AppKit" would be far too weak a rule:
+          # NaturalLanguage and AVFoundation are every bit as Apple-only, and so
+          # is Dispatch-plus-Darwin. Anything not named here is a boundary
+          # violation and must be justified by editing this list.
+          allowed='^(Foundation|FoundationEssentials)$'
+          violations=0
+          while IFS= read -r file; do
+            while IFS= read -r module; do
+              [ -n "$module" ] || continue
+              if ! printf '%s' "$module" | grep -qE "$allowed"; then
+                echo "::error file=$file::HanReaderCore may not import '$module' (allowed: Foundation, FoundationEssentials)"
+                violations=1
+              fi
+            done < <(
+              grep -hoE '^[[:space:]]*(public |package |internal )?import [A-Za-z_][A-Za-z0-9_]*' "$file" \
+                | awk '{print $NF}'
+            )
+          done < <(find Sources/HanReaderCore -name '*.swift')
+          [ "$violations" -eq 0 ] && echo "Core imports are clean."
+          exit $violations
+
+      - name: Package manifest declares the intended graph
+        # Reads the manifest itself rather than trusting constants maintained by
+        # hand in the sources, which could only ever restate themselves.
+        run: |
+          set -euo pipefail
+          swift package dump-package > /tmp/pkg.json
+          python3 - <<'PY'
+          import json, sys
+
+          pkg = json.load(open("/tmp/pkg.json"))
+          targets = {t["name"]: t for t in pkg["targets"]}
+          failures = []
+
+          def deps(name):
+              """Names this target depends on, whether sibling targets or products."""
+              out = set()
+              for d in targets[name].get("dependencies", []):
+                  if "byName" in d and d["byName"] and d["byName"][0]:
+                      out.add(d["byName"][0])
+                  if "target" in d and d["target"] and d["target"][0]:
+                      out.add(d["target"][0])
+                  if "product" in d and d["product"] and d["product"][0]:
+                      out.add(d["product"][0])
+              return out
+
+          def check(cond, msg):
+              if not cond:
+                  failures.append(msg)
+
+          expected = {
+              "HanReaderCore": set(),
+              "HanReaderTokenization": {"HanReaderCore"},
+              "HanReaderPersistence": {"HanReaderCore", "GRDB"},
+              "HanReaderDictionaryImport": {"HanReaderCore", "HanReaderPersistence"},
+              "HanReaderPlayback": {"HanReaderCore"},
+              "HanReaderPlatform": {"HanReaderCore"},
+              "HanReaderUI": {
+                  "HanReaderCore", "HanReaderTokenization", "HanReaderPersistence",
+                  "HanReaderDictionaryImport", "HanReaderPlayback", "HanReaderPlatform",
+              },
+              "hanreader-dictgen": {
+                  "HanReaderCore", "HanReaderPersistence",
+                  "HanReaderDictionaryImport", "ArgumentParser",
+              },
+          }
+
+          for name, want in expected.items():
+              check(name in targets, f"target '{name}' is missing from the manifest")
+              if name in targets:
+                  got = deps(name)
+                  check(got == want, f"{name} depends on {sorted(got)}, expected {sorted(want)}")
+
+          # The rules that matter most, stated independently of the table above
+          # so that a careless edit to it still trips them.
+          check(deps("HanReaderCore") == set(), "HanReaderCore must be a leaf")
+          grdb = {n for n in targets if "GRDB" in deps(n)}
+          check(grdb == {"HanReaderPersistence"},
+                f"only HanReaderPersistence may depend on GRDB, found {sorted(grdb)}")
+          ap = {n for n in targets if "ArgumentParser" in deps(n)}
+          check(ap == {"hanreader-dictgen"},
+                f"only hanreader-dictgen may depend on ArgumentParser, found {sorted(ap)}")
+
+          for f in failures:
+              print(f"::error file=Package.swift::{f}")
+          if failures:
+              sys.exit(1)
+          print(f"Manifest graph matches: {len(expected)} targets checked.")
+          PY
+
+      - name: Build HanReaderCore in isolation
+        run: swift build --target HanReaderCore -Xswiftc -warnings-as-errors
+
   required-checks:
     # The single required status check for branch protection. Adding or renaming
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene]
+    needs: [hygiene, spm-test, architecture]
     if: always()
     steps:
       - name: Verify all required jobs succeeded

@@ -44,5 +44,8 @@ Resources/Generated/*
 !Tests/Fixtures/**/*.u8
 !Tests/Fixtures/**/*.dsl.txt
 
+# ── CI scratch ─────────────────────────────────────────────────────────────
+.toolchain-id
+
 # ── macOS ─────────────────────────────────────────────────────────────────
 .DS_Store
