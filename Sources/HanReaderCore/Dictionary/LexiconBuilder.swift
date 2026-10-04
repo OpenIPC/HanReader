@@ -62,7 +62,27 @@ public enum LexiconBuilder {
     /// - **Not a bare cross-reference.** An entry whose only sense is
     ///   "variant of X" is a spelling note, and treating it as a word to
     ///   segment towards produces confident nonsense.
-    public static func lexicon(from entries: [DictionaryEntry]) -> [Lexeme] {
+    /// Cap for a dictionary that is not word-level.
+    ///
+    /// CC-CEDICT's headwords are genuinely words, so the general cap of six
+    /// suits it: 125,173 entries produce about a hundred thousand lexemes.
+    /// BKRS is an encyclopaedic dictionary and its headwords are not — at six
+    /// characters it contributes **2,804,554** of them, a segmentation
+    /// lexicon in which almost every string of Han characters is a word, which
+    /// is the condition under which maximum-matching produces confident
+    /// nonsense. It is also 176 MB of index.
+    ///
+    /// Four is where the measured length distribution says to stop for it:
+    /// 1→33,372, 2→427,842, 3→455,438, 4→959,810, then 5→585,617 and
+    /// 6→439,262 of increasingly phrase-like entries.
+    public static let encyclopaedicWordLength = 4
+
+    public static func lexicon(
+        from entries: [DictionaryEntry],
+        maximumLength: Int = Self.maximumWordLength,
+    )
+        -> [Lexeme]
+    {
         var best: [String: Double] = [:]
 
         for entry in entries {
@@ -73,7 +93,7 @@ public enum LexiconBuilder {
             // would be segmented character by character.
             for word in entry.headword.bothScripts {
                 let length = word.count
-                guard length >= 1, length <= maximumWordLength else { continue }
+                guard length >= 1, length <= maximumLength else { continue }
                 guard word.allSatisfy(\.isHan) else { continue }
 
                 // More senses suggests a more established word, which is the
@@ -126,15 +146,39 @@ public enum LexiconBuilder {
     }
 
     public static func characterReadings(from entries: [DictionaryEntry]) -> [CharacterReading] {
-        var byCharacter: [Character: [String: Candidate]] = [:]
-
+        var collector = CharacterReadings()
         for entry in entries {
+            collector.add(entry)
+        }
+        return collector.ranked()
+    }
+
+    /// Collects character readings one entry at a time.
+    ///
+    /// The same ranking as `characterReadings(from:)`, which is a convenience
+    /// over this — but without the array. Building the table for an imported
+    /// BKRS set meant holding every single-character entry at once, and those
+    /// are the densest cards in the dictionary: 38,618 of them carrying 27 MB
+    /// of encoded senses, which 一's 57 and 打's 57 are typical of rather than
+    /// exceptional. Decoded together, with the decoder's own intermediates on
+    /// top, that took peak memory to 857 MB against an import ceiling of 60.
+    ///
+    /// What the ranking needs from an entry is five small values. Keeping
+    /// those and discarding the entry makes the table's cost a function of how
+    /// many distinct characters a dictionary has, not of how much it has to
+    /// say about them.
+    public struct CharacterReadings: Sendable {
+        private var byCharacter: [Character: [String: Candidate]] = [:]
+
+        public init() {}
+
+        public mutating func add(_ entry: DictionaryEntry) {
             guard let syllable = entry.reading.compactMap({ token -> PinyinSyllable? in
                 if case let .syllable(syllable) = token {
                     return syllable
                 }
                 return nil
-            }).first else { continue }
+            }).first else { return }
 
             let candidate = Candidate(
                 numeric: syllable.numeric,
@@ -169,20 +213,22 @@ public enum LexiconBuilder {
             }
         }
 
-        var readings: [CharacterReading] = []
-        for (character, candidates) in byCharacter {
-            let ordered = candidates.values.sorted(by: isBetter)
-            for (rank, candidate) in ordered.enumerated() {
-                readings.append(CharacterReading(
-                    character: character,
-                    numeric: candidate.numeric,
-                    display: candidate.display,
-                    rank: rank,
-                ))
+        public func ranked() -> [CharacterReading] {
+            var readings: [CharacterReading] = []
+            for (character, candidates) in byCharacter {
+                let ordered = candidates.values.sorted(by: isBetter)
+                for (rank, candidate) in ordered.enumerated() {
+                    readings.append(CharacterReading(
+                        character: character,
+                        numeric: candidate.numeric,
+                        display: candidate.display,
+                        rank: rank,
+                    ))
+                }
             }
-        }
-        return readings.sorted {
-            ($0.character, $0.rank) < ($1.character, $1.rank)
+            return readings.sorted {
+                ($0.character, $0.rank) < ($1.character, $1.rank)
+            }
         }
     }
 

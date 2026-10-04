@@ -134,7 +134,7 @@ public struct DictionaryContainer: Sendable {
         }
     }
 
-    private static func writeMetadata(
+    static func writeMetadata(
         _ metadata: DictionaryMetadata,
         to queue: DatabaseQueue,
     ) throws {
@@ -249,6 +249,28 @@ public struct DictionaryContainer: Sendable {
     public func syllableBases() throws -> Set<String> {
         try dbQueue.read { db in
             try Set(String.fetchAll(db, sql: "SELECT base FROM syllableBase"))
+        }
+    }
+
+    /// How many words the segmentation lexicon holds.
+    ///
+    /// Separate from `lexicon()`, which returns all of them. A BKRS container
+    /// has 1,806,893, and fetching them to print one number took 450 MB — in
+    /// a `--verbose` summary, where it looked for a while like the import
+    /// itself had blown its memory ceiling.
+    public func lexemeCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT count(*) FROM lexeme") ?? 0
+        }
+    }
+
+    /// Where each entry came from, in row order.
+    ///
+    /// For verifying that a resumable import stamps each entry with its own
+    /// card rather than with the one that happened to fill its batch.
+    public func sourceOffsets() throws -> [Int] {
+        try dbQueue.read { db in
+            try Int.fetchAll(db, sql: "SELECT sourceOffset FROM entry ORDER BY id")
         }
     }
 
