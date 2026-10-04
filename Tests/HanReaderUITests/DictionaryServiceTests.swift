@@ -163,6 +163,29 @@ struct DictionaryServiceTests {
         #expect(dictionary.wordQueries == 1)
     }
 
+    /// Annotating a word and then tapping it used to run the same whole-word
+    /// query twice: once through the composer to find out how it sounds, and
+    /// once through `entries(for:)` to find out what it means.
+    @Test("A word annotated and then tapped is queried once")
+    func readingAndEntriesShareOneQuery() async {
+        let dictionary = stub()
+        let service = DictionaryService(lookup: dictionary)
+
+        _ = await service.reading(for: "中国")
+        _ = await service.entries(for: "中国")
+        #expect(dictionary.wordQueries == 1)
+    }
+
+    @Test("The order does not matter")
+    func tappedThenAnnotated() async {
+        let dictionary = stub()
+        let service = DictionaryService(lookup: dictionary)
+
+        _ = await service.entries(for: "中国")
+        _ = await service.reading(for: "中国")
+        #expect(dictionary.wordQueries == 1)
+    }
+
     // MARK: - Failure
 
     /// A word that cannot be looked up renders with no annotation — exactly

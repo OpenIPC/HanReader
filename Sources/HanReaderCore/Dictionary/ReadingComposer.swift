@@ -128,8 +128,17 @@ public enum ReadingComposer {
     ) throws
         -> TokenReading?
     {
-        let entries = try lookup.entries(for: word).filter { !$0.readingDisplay.isEmpty }
-        guard let best = entries.max(by: isWeaker) else { return nil }
+        try reading(from: lookup.entries(for: word))
+    }
+
+    /// The reading to show, given entries already fetched.
+    ///
+    /// Separate from `exactReading(for:in:)` so a caller that has the entries
+    /// in hand — the detail panel has just fetched them to show definitions —
+    /// does not query for them a second time.
+    public static func reading(from entries: [DictionaryEntry]) -> TokenReading? {
+        let usable = entries.filter(isUsable)
+        guard let best = usable.max(by: isWeaker) else { return nil }
 
         // Compared case-insensitively. Nearly every common character has a
         // surname entry alongside its ordinary one -- 年 is `nián` and
@@ -137,11 +146,24 @@ public enum ReadingComposer {
         // written two ways, not two readings. Counting them as a
         // disagreement would mark most of the page as uncertain and so say
         // nothing at all.
-        let distinct = Set(entries.map { $0.readingDisplay.lowercased() })
+        let distinct = Set(usable.map { $0.readingDisplay.lowercased() })
         return TokenReading(
             display: best.readingDisplay,
             source: distinct.count > 1 ? .ambiguous : .dictionary,
         )
+    }
+
+    /// Whether an entry's reading can be shown to a reader.
+    ///
+    /// CC-CEDICT writes `[xx5]` for a character whose pronunciation it does
+    /// not know — 23 entries, mostly Korean *gugja* characters that happen to
+    /// be encoded as Han. The parser keeps that as `PinyinToken.unknown`
+    /// precisely so the UI can decline to show it, and `Pinyin.display`
+    /// renders it as `?`. Shown, it is a question mark presented as a
+    /// pronunciation, and marked `.dictionary` it would be presented as a
+    /// *confident* one. No annotation is the honest rendering.
+    private static func isUsable(_ entry: DictionaryEntry) -> Bool {
+        !entry.readingDisplay.isEmpty && !entry.reading.contains(.unknown)
     }
 
     /// Whether `lhs` is the worse choice of reading. See `exactReading` for
@@ -190,7 +212,7 @@ public enum ReadingComposer {
     /// display strings, so that the apostrophe rule is applied across the
     /// join: 西安 is `Xī'ān`, and concatenating `Xī` and `ān` would give
     /// `Xīān`, which reads as a different word.
-    static func composedReading(
+    public static func composedReading(
         for word: String,
         in lookup: some DictionaryLookup,
     ) throws
@@ -206,7 +228,10 @@ public enum ReadingComposer {
                 return nil
             }
             let parsed = Pinyin.parse(numeric: reading.numeric)
-            guard !parsed.isEmpty else { return nil }
+            // A character the dictionary itself marks unknown cannot
+            // contribute to a word's reading, and the whole word is refused
+            // rather than annotated with a `?` in the middle of it.
+            guard !parsed.isEmpty, !parsed.contains(.unknown) else { return nil }
             tokens.append(contentsOf: parsed)
         }
 

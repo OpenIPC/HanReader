@@ -36,16 +36,19 @@ actor DictionaryService {
     /// thousand copies of itself on the next scroll.
     private var hasReportedFailure = false
 
-    /// - Parameter capacity: how many words to remember. Four thousand covers
-    ///   several screens of dense text in both directions, which is the
-    ///   working set while scrolling, and costs a few hundred kilobytes.
-    init(lookup: some DictionaryLookup, capacity: Int = 4096) {
+    /// - Parameters:
+    ///   - capacity: how many readings to remember. Four thousand covers
+    ///     several screens of dense text in both directions, which is the
+    ///     working set while scrolling, and costs a few hundred kilobytes.
+    ///   - entryCapacity: how many full entry lists to remember. Smaller,
+    ///     and deliberately so: a reading is a short string while an entry
+    ///     carries every sense, and BKRS entries can be long. A thousand
+    ///     still covers two screens, so scrolling back to a word just
+    ///     annotated and tapping it does not query again.
+    init(lookup: some DictionaryLookup, capacity: Int = 4096, entryCapacity: Int = 1024) {
         self.lookup = lookup
         readingCache = BoundedCache(capacity: capacity)
-        // Sense payloads are much larger than readings and are only fetched
-        // on a tap, so a small cache is enough to make going back and forth
-        // between two words instant.
-        entryCache = BoundedCache(capacity: 256)
+        entryCache = BoundedCache(capacity: entryCapacity)
     }
 
     // MARK: - Readings
@@ -69,9 +72,15 @@ actor DictionaryService {
         if let cached = readingCache.value(forKey: word) {
             return cached
         }
-        let reading = attempt("reading for \(word)", default: nil) {
-            try ReadingComposer.reading(for: word, in: lookup)
-        }
+        // Routed through `entries(for:)` rather than letting the composer do
+        // its own lookup. The composer would query for exactly the same rows
+        // and throw them away, so annotating a word and then tapping it ran
+        // the same whole-word query twice -- once to find out how it sounds
+        // and once to find out what it means.
+        let reading = ReadingComposer.reading(from: entries(for: word))
+            ?? attempt("composed reading for \(word)", default: nil) {
+                try ReadingComposer.composedReading(for: word, in: lookup)
+            }
         readingCache.insert(reading, forKey: word)
         return reading
     }

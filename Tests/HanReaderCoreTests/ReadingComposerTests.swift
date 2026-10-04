@@ -180,6 +180,49 @@ struct ReadingComposerTests {
         #expect(reading.source == .composed)
     }
 
+    /// CC-CEDICT writes `[xx5]` for a character whose pronunciation it does
+    /// not know — 23 of them, mostly Korean *gugja* characters that happen to
+    /// be encoded as Han. `Pinyin.display` renders that as `?`, and the token
+    /// case exists so the UI can decline to show it. Showing it would put a
+    /// question mark over the word *and* mark it `.dictionary`, presenting a
+    /// non-answer as a confident one.
+    @Test("A reading the dictionary marks unknown is not shown")
+    func unknownReadingsAreRefused() throws {
+        let stub = StubDictionary(words: ["丆": [entry("丆", "xx5")]])
+        #expect(try ReadingComposer.reading(for: "丆", in: stub) == nil as TokenReading?)
+    }
+
+    @Test("An unknown reading does not hide a known one")
+    func unknownDoesNotCrowdOutKnown() throws {
+        let stub = StubDictionary(words: ["X": [
+            entry("X", "xx5", senses: 9),
+            entry("X", "hao3", senses: 1),
+        ]])
+        let readingResult = try ReadingComposer.reading(for: "X", in: stub)
+        let reading = try #require(readingResult)
+        #expect(reading.display == "hǎo")
+        // And the unknown one does not count towards ambiguity either: there
+        // is only one reading here, not two.
+        #expect(reading.source == .dictionary)
+    }
+
+    @Test("A character with an unknown reading blocks composition")
+    func unknownBlocksComposition() throws {
+        let stub = StubDictionary(characters: [
+            "北": [character("北", "bei3")],
+            "丆": [character("丆", "xx5")],
+        ])
+        // Better no annotation than `běi?` over a two-character word.
+        #expect(try ReadingComposer.reading(for: "北丆", in: stub) == nil as TokenReading?)
+    }
+
+    @Test("Entries already in hand are not looked up again")
+    func readingFromEntries() {
+        let entries = [entry("中国", "Zhong1 guo2")]
+        #expect(ReadingComposer.reading(from: entries)?.display == "Zhōngguó")
+        #expect(ReadingComposer.reading(from: []) == nil)
+    }
+
     // MARK: - Composed readings
 
     /// Not optional, and the number is why: 77% of BKRS entries carry no
