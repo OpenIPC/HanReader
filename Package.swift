@@ -170,6 +170,15 @@ let package = Package(
             dependencies: ["HanReaderDictionaryImport"],
             swiftSettings: baseSettings,
         ),
+        // Apple-only by nature: this target exists to test the conversions
+        // that cannot live in HanReaderCore because Linux has no encoding
+        // tables for them, so there is nothing here that could run anywhere
+        // else.
+        .testTarget(
+            name: "HanReaderPlatformTests",
+            dependencies: ["HanReaderPlatform"],
+            swiftSettings: mainActorSettings,
+        ),
         .testTarget(
             name: "HanReaderUITests",
             dependencies: ["HanReaderUI"],

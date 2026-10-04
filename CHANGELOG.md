@@ -82,5 +82,10 @@ it needs to read like release notes rather than a commit log.
 - [Docs/fidelity.md](Docs/fidelity.md), which states behaviourally what
   "faithful to the prototype" means across two platforms, and names the test
   that enforces each part.
+- Text import that reads the files Chinese text actually comes in: UTF-8,
+  UTF-16 and, crucially, GB18030 and Big5. The encoding is detected rather
+  than assumed, and when a file cannot be identified the reader is shown a
+  preview of each candidate instead of an error. Every imported file is
+  copied in behind one security-scoped boundary, on both platforms.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main
