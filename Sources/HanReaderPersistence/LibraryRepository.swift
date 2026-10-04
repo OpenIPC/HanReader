@@ -22,15 +22,20 @@ public struct LibraryRepository: Sendable {
 
     private let dbQueue: DatabaseQueue
 
+    /// Where attached audio lives. Needed so that deleting a text can remove
+    /// its audio file, not merely the row pointing at it.
+    private let audioDirectory: URL?
+
     /// Opens the library at `url`, creating and migrating it as needed.
-    public init(url: URL) throws {
+    public init(url: URL, audioDirectory: URL? = nil) throws {
         dbQueue = try AppDatabase.openLibrary(at: url)
+        self.audioDirectory = audioDirectory
     }
 
     /// Opens the library at its standard location in the application support
     /// directory.
     public init(locations: AppDatabase.Locations) throws {
-        try self.init(url: locations.library)
+        try self.init(url: locations.library, audioDirectory: locations.audio)
     }
 
     /// An in-memory library, for tests and previews.
@@ -38,12 +43,13 @@ public struct LibraryRepository: Sendable {
     /// The queue is held privately, so GRDB never crosses this module's
     /// boundary -- `InternalImportsByDefault` would refuse to compile a
     /// public initializer taking one.
-    public static func inMemory() throws -> Self {
-        try Self(dbQueue: AppDatabase.inMemoryLibrary())
+    public static func inMemory(audioDirectory: URL? = nil) throws -> Self {
+        try Self(dbQueue: AppDatabase.inMemoryLibrary(), audioDirectory: audioDirectory)
     }
 
-    init(dbQueue: DatabaseQueue) {
+    init(dbQueue: DatabaseQueue, audioDirectory: URL? = nil) {
         self.dbQueue = dbQueue
+        self.audioDirectory = audioDirectory
     }
 
     // MARK: - Reading
@@ -120,7 +126,7 @@ public struct LibraryRepository: Sendable {
                     (title, content, contentHash, characterCount, preview, sourceName, importedAt)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, arguments: [
-                title, content, hash, content.count,
+                title, content, hash, content.utf16.count,
                 Self.preview(of: content), sourceName, now,
             ])
             return .imported(TextID(rawValue: db.lastInsertedRowID))
@@ -128,11 +134,33 @@ public struct LibraryRepository: Sendable {
     }
 
     public func delete(_ id: TextID) async throws {
-        // Audio, position and revealed words go with it via ON DELETE CASCADE,
+        // The cascade removes the audioTrack ROW, but nothing removes the file
+        // it names -- so without this a deleted text leaves its audio on disk
+        // forever, unreferenced and invisible.
+        let orphanedAudio = try await audioTrack(for: id)?.relativePath
+
+        // Position and revealed words go with the text via ON DELETE CASCADE,
         // which only works because foreign keys are enabled in the
         // configuration -- SQLite has them off by default.
         try await dbQueue.write { db in
             try db.execute(sql: "DELETE FROM text WHERE id = ?", arguments: [id.rawValue])
+        }
+
+        if let orphanedAudio, let directory = audioDirectory {
+            try? FileManager.default.removeItem(
+                at: directory.appendingPathComponent(orphanedAudio),
+            )
+        }
+    }
+
+    /// Clears a stored playhead. Separate from `save(_:)`, which deliberately
+    /// preserves one it was not given.
+    public func clearAudioTime(of id: TextID) async throws {
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE readingPosition SET audioTime = NULL WHERE textId = ?",
+                arguments: [id.rawValue],
+            )
         }
     }
 
@@ -175,7 +203,12 @@ public struct LibraryRepository: Sendable {
                     blockIndex = excluded.blockIndex,
                     tokenIndex = excluded.tokenIndex,
                     characterOffset = excluded.characterOffset,
-                    audioTime = excluded.audioTime,
+                    -- COALESCE, not a plain replace. The reader saves its
+                    -- position constantly while scrolling and has no playhead
+                    -- to supply, so assigning excluded.audioTime would clear
+                    -- the one the audio player stored. Use clearAudioTime(of:)
+                    -- to remove it deliberately.
+                    audioTime = COALESCE(excluded.audioTime, readingPosition.audioTime),
                     updatedAt = excluded.updatedAt
             """, arguments: [
                 position.textID.rawValue, position.blockIndex, position.tokenIndex,
@@ -227,6 +260,12 @@ public struct LibraryRepository: Sendable {
     // MARK: - Audio
 
     public func attachAudio(_ track: AudioTrack) async throws {
+        // Validated rather than trusted. An absolute path stores the container
+        // UUID, and the resulting breakage only shows up after a restore --
+        // long after the mistake, and far from it.
+        guard !track.relativePath.hasPrefix("/"), !track.relativePath.contains("..") else {
+            throw LibraryError.audioPathMustBeRelative(track.relativePath)
+        }
         try await dbQueue.write { db in
             try db.execute(sql: """
                 INSERT INTO audioTrack (textId, relativePath, duration, importedAt)
@@ -261,11 +300,50 @@ public struct LibraryRepository: Sendable {
 
     /// The stored preview. Taken by character so a multi-byte script is not
     /// cut mid-character, and collapsed so newlines do not render as gaps.
+    /// Scans only as far as it needs to.
+    ///
+    /// The obvious implementation -- trim, split, join, then take a prefix --
+    /// allocates intermediates proportional to the *whole document* in order
+    /// to produce 120 characters. For a novel that is tens of megabytes of
+    /// garbage per import.
     static func preview(of content: String, limit: Int = 120) -> String {
-        let collapsed = content
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: \.isWhitespace)
-            .joined(separator: " ")
-        return collapsed.count <= limit ? collapsed : String(collapsed.prefix(limit))
+        var out = ""
+        out.reserveCapacity(limit)
+        var pendingSpace = false
+
+        for character in content {
+            if character.isWhitespace {
+                // Leading whitespace is dropped; interior runs collapse to one
+                // space, emitted only once something follows.
+                pendingSpace = !out.isEmpty
+                continue
+            }
+            if pendingSpace {
+                out.append(" ")
+                pendingSpace = false
+                if out.count == limit {
+                    return out
+                }
+            }
+            out.append(character)
+            if out.count == limit {
+                return out
+            }
+        }
+        return out
+    }
+}
+
+/// Things the library can refuse to do.
+public enum LibraryError: Error, Sendable, Equatable, LocalizedError {
+    /// An audio path must be relative to the audio directory; an absolute one
+    /// embeds a container location that does not survive a restore.
+    case audioPathMustBeRelative(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .audioPathMustBeRelative(path):
+            "Audio must be stored as a path relative to the audio directory, but got \(path)."
+        }
     }
 }

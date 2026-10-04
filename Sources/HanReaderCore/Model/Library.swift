@@ -25,6 +25,13 @@ public struct LibraryItem: Hashable, Sendable, Identifiable {
     public let title: String
     /// First ~120 characters, stored at import rather than derived on demand.
     public let preview: String
+    /// Length in **UTF-16 units**, matching `ReadingPosition.characterOffset`.
+    ///
+    /// The two must share a unit or progress is wrong: `String.count` counts
+    /// grapheme clusters, and a text containing supplementary-plane
+    /// characters has fewer of those than UTF-16 units. That is not an
+    /// emoji-only concern for this app -- rare Hanzi in CJK Extension B are
+    /// supplementary-plane, so a classical text would report finishing early.
     public let characterCount: Int
     public let hasAudio: Bool
     public let importedAt: Date
@@ -109,7 +116,9 @@ public struct AudioTrack: Hashable, Sendable {
     /// Never absolute. The prototype stored an absolute path containing the
     /// application container's UUID, which changes on iOS across installs and
     /// restores — so every audio attachment broke the first time a user
-    /// restored a backup.
+    /// restored a backup. `LibraryRepository.attachAudio` rejects an absolute
+    /// path rather than trusting callers, since the failure would otherwise
+    /// only appear after a restore.
     public let relativePath: String
     public let duration: Double?
     public let importedAt: Date
