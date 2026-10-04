@@ -5,22 +5,22 @@ import PackageDescription
 
 // MARK: - Shared build settings
 
-// Applied to every target. `InternalImportsByDefault` is load-bearing rather
-// than stylistic: it makes each `import` internal unless explicitly marked
-// `public import`, which turns "HanReaderPersistence must not leak GRDB types
-// across its module boundary" from a code-review convention into a compiler
-// error.
+/// Applied to every target. `InternalImportsByDefault` is load-bearing rather
+/// than stylistic: it makes each `import` internal unless explicitly marked
+/// `public import`, which turns "HanReaderPersistence must not leak GRDB types
+/// across its module boundary" from a code-review convention into a compiler
+/// error.
 let baseSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .enableUpcomingFeature("ExistentialAny"),
     .enableUpcomingFeature("InternalImportsByDefault"),
 ]
 
-// Applied to the UI-facing targets. `defaultIsolation(MainActor.self)` removes
-// the need to annotate nearly every type in these modules, and with it the
-// class of workaround the predecessor prototype was built on
-// (`nonisolated(unsafe) let db`, `MainActor.assumeIsolated` inside an AVPlayer
-// time observer). It is the reason this package requires tools-version 6.2.
+/// Applied to the UI-facing targets. `defaultIsolation(MainActor.self)` removes
+/// the need to annotate nearly every type in these modules, and with it the
+/// class of workaround the predecessor prototype was built on
+/// (`nonisolated(unsafe) let db`, `MainActor.assumeIsolated` inside an AVPlayer
+/// time observer). It is the reason this package requires tools-version 6.2.
 let mainActorSettings: [SwiftSetting] = baseSettings + [
     .defaultIsolation(MainActor.self),
 ]
@@ -39,10 +39,12 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", .upToNextMinor(from: "7.11.1")),
-        .package(url: "https://github.com/apple/swift-argument-parser", .upToNextMinor(from: "1.8.2")),
+        .package(
+            url: "https://github.com/apple/swift-argument-parser",
+            .upToNextMinor(from: "1.8.2"),
+        ),
     ],
     targets: [
-
         // MARK: Core — Foundation only
 
         // Imports nothing but Foundation, so that the bulk of the test suite
@@ -52,7 +54,7 @@ let package = Package(
         // just as Apple-only as AppKit, so "no AppKit" would be too weak.
         .target(
             name: "HanReaderCore",
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
 
         // MARK: Engine
@@ -64,7 +66,7 @@ let package = Package(
         .target(
             name: "HanReaderTokenization",
             dependencies: ["HanReaderCore"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
 
         // Owns every GRDB call and must not expose a GRDB type in its public
@@ -76,7 +78,7 @@ let package = Package(
                 "HanReaderCore",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
 
         // Streaming dictionary ingestion: CC-CEDICT and ABBYY DSL, with
@@ -84,7 +86,7 @@ let package = Package(
         .target(
             name: "HanReaderDictionaryImport",
             dependencies: ["HanReaderCore", "HanReaderPersistence"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
 
         // MARK: Media
@@ -92,7 +94,7 @@ let package = Package(
         .target(
             name: "HanReaderPlayback",
             dependencies: ["HanReaderCore"],
-            swiftSettings: mainActorSettings
+            swiftSettings: mainActorSettings,
         ),
 
         // MARK: Platform and UI
@@ -104,7 +106,7 @@ let package = Package(
         .target(
             name: "HanReaderPlatform",
             dependencies: ["HanReaderCore"],
-            swiftSettings: mainActorSettings
+            swiftSettings: mainActorSettings,
         ),
 
         .target(
@@ -117,7 +119,7 @@ let package = Package(
                 "HanReaderPlayback",
                 "HanReaderPlatform",
             ],
-            swiftSettings: mainActorSettings
+            swiftSettings: mainActorSettings,
         ),
 
         // MARK: Tools
@@ -134,7 +136,7 @@ let package = Package(
                 "HanReaderDictionaryImport",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
 
         // MARK: Tests
@@ -142,27 +144,27 @@ let package = Package(
         .testTarget(
             name: "HanReaderCoreTests",
             dependencies: ["HanReaderCore"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
         .testTarget(
             name: "HanReaderTokenizationTests",
             dependencies: ["HanReaderTokenization"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
         .testTarget(
             name: "HanReaderPersistenceTests",
             dependencies: ["HanReaderPersistence"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
         .testTarget(
             name: "HanReaderDictionaryImportTests",
             dependencies: ["HanReaderDictionaryImport"],
-            swiftSettings: baseSettings
+            swiftSettings: baseSettings,
         ),
         .testTarget(
             name: "HanReaderUITests",
             dependencies: ["HanReaderUI"],
-            swiftSettings: mainActorSettings
+            swiftSettings: mainActorSettings,
         ),
-    ]
+    ],
 )

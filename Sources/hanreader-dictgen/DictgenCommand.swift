@@ -32,7 +32,7 @@ struct Dictgen: AsyncParsableCommand {
         wiring -- package graph, build plugin, and CI invocation -- can be \
         verified end to end before there is a parser behind it.
         """,
-        version: HanReaderCore.version
+        version: HanReaderCore.version,
     )
 
     func run() async throws {

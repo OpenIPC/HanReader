@@ -1,7 +1,6 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import Testing
-
 @testable import HanReaderCore
 
 /// Proves the target compiles and that its version constant is well formed.

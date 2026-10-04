@@ -1,0 +1,51 @@
+# SwiftFormat configuration. Pinned to 0.63.1 via Scripts/tools.lock.
+#
+# --swiftversion is set explicitly so that a contributor's slightly different
+# SwiftFormat build and CI produce byte-identical output. Without it the tool
+# infers the version from the environment and the two can disagree.
+
+--swiftversion 6.2
+
+--maxwidth 100
+--indent 4
+--tabwidth 4
+--linebreaks lf
+
+# Wrapping
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--wrapconditions after-first
+--closingparen balanced
+--wrapreturntype if-multiline
+--funcattributes prev-line
+--typeattributes prev-line
+--storedvarattrs same-line
+
+# Style
+--self remove
+--importgrouping testable-bottom
+--trailingcommas always
+--stripunusedargs closure-only
+--emptybraces no-space
+--someany true
+--extensionacl on-declarations
+--patternlet hoist
+--redundanttype inferred
+--shortoptionals always
+
+# Every Swift file carries this one-line marker, which keeps the MIT-licensed
+# code visibly distinct from the unmarked third-party data under Dictionaries/
+# without hand-maintaining per-file headers.
+--header "// HanReader — MIT licensed. See LICENSE."
+
+# Disabled rules
+#
+# swiftTestingTestCaseNames rewrites `@Test("Links Core") func linksCore()` into
+# ``@Test func `Links Core`()`` — a backtick-quoted name containing spaces and
+# capitals. That form is unusual to read, and SwiftLint's identifier_name
+# rejects it, so the two tools would contradict each other on every test. Keep
+# lowerCamelCase function names with a human-readable @Test display name.
+--disable swiftTestingTestCaseNames
+
+--exclude .build,.tools,Resources/Generated,Tests/Fixtures,Dictionaries

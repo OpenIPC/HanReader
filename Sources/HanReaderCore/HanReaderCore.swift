@@ -23,7 +23,6 @@ import Foundation
 ///
 /// - Note: This is scaffolding. The domain model arrives in milestone M2.
 public enum HanReaderCore {
-
     /// The HanReader version, and the single source of truth for it.
     ///
     /// Read by `hanreader-dictgen --version` and recorded in generated

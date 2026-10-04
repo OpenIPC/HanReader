@@ -13,9 +13,10 @@ concurrency:
 permissions:
   contents: read
 
-# The lint, application-build and dictionary jobs arrive later in milestone M1
-# and in M3. `spm-test` is the fast lane where most of the suite will live, and
-# `linux-core` is what actually enforces the architecture -- see its comment.
+# The application-build matrix arrives with the app targets later in M1, and
+# the dictionary job in M3. `lint` gates the expensive jobs, `spm-test` is the
+# fast lane where most of the suite will live, and `architecture` is what
+# actually enforces the module boundaries -- see its comment.
 
 jobs:
   hygiene:
@@ -142,6 +143,29 @@ jobs:
                   bad = True
           sys.exit(1 if bad else 0)
           PY
+
+  lint:
+    # Cheap and fast, so it gates the expensive jobs. Uses the pinned tooling
+    # from Scripts/tools.lock rather than whatever the runner image preinstalls,
+    # so a contributor's local `make lint` and CI cannot disagree.
+    name: Format and lint
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v4
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('Scripts/tools.lock') }}
+
+      - name: Install pinned tooling
+        run: ./Scripts/bootstrap.sh
+
+      - name: Check formatting
+        run: .tools/bin/swiftformat --lint .
+
+      - name: Lint
+        run: .tools/bin/swiftlint lint --strict --reporter github-actions-logging
 
   spm-test:
     # The fast lane: no simulator, no Xcode project, no XcodeGen. Most of the
@@ -339,7 +363,7 @@ jobs:
     # a job above never means touching repository settings.
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [hygiene, spm-test, architecture]
+    needs: [hygiene, lint, spm-test, architecture]
     if: always()
     steps:
       - name: Verify all required jobs succeeded
