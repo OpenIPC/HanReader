@@ -198,11 +198,15 @@ public struct DictionaryContainer: Sendable {
     public func entries(for headword: String) throws -> [DictionaryEntry] {
         let decoder = JSONDecoder()
         return try dbQueue.read { db in
+            // Matched against BOTH scripts. Storing the traditional form and
+            // then only ever querying the simplified one means a reader of
+            // traditional text finds nothing at all -- and the index on
+            // traditional existed while nothing used it.
             let sql = """
                 SELECT simplified, traditional, readingNumeric, senses
-                FROM entry WHERE simplified = ? ORDER BY id
+                FROM entry WHERE simplified = ? OR traditional = ? ORDER BY id
             """
-            return try Row.fetchAll(db, sql: sql, arguments: [headword]).map { row in
+            return try Row.fetchAll(db, sql: sql, arguments: [headword, headword]).map { row in
                 try DictionaryEntry(
                     headword: Headword(
                         simplified: row["simplified"],

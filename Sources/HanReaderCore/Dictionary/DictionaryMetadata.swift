@@ -79,6 +79,7 @@ extension DictionaryMetadata {
     public static func ccCEDICT(
         entryCount: Int,
         sourceVersion: String?,
+        licenceURL: String,
         parserVersion: Int,
     )
         -> Self
@@ -89,12 +90,12 @@ extension DictionaryMetadata {
             format: "cc-cedict",
             indexLanguage: "zh-Hans",
             glossLanguage: "en",
-            licence: "CC BY-SA 4.0",
+            licence: licenceName(from: licenceURL),
             attribution: """
             CC-CEDICT — a bilingual Chinese-English dictionary, by the CC-CEDICT \
             Project (originally MDBG, continuing the CEDICT project begun by Paul \
-            Denisowski). Licensed under Creative Commons Attribution-ShareAlike \
-            4.0 International. Changes made: parsed from the distributed .u8 text \
+            Denisowski). Licensed under \(licenceName(from: licenceURL)) \
+            (\(licenceURL)). Changes made: parsed from the distributed .u8 text \
             format and converted into a SQLite database for lookup; numeric-tone \
             pinyin additionally rendered into diacritic form for display, and \
             per-character readings and a segmentation word list derived from the \
@@ -105,5 +106,22 @@ extension DictionaryMetadata {
             parserVersion: parserVersion,
             entryCount: entryCount,
         )
+    }
+
+    /// A readable licence name for a Creative Commons URL.
+    ///
+    /// Falls back to the URL verbatim rather than guessing: an unrecognised
+    /// licence should be reported as-is, not relabelled as one we know.
+    public static func licenceName(from url: String) -> String {
+        let lowered = url.lowercased()
+        guard lowered.contains("creativecommons.org") else { return url }
+        guard let kind = ["by-nc-sa", "by-sa", "by-nd", "by-nc", "by"]
+            .first(where: { lowered.contains("/\($0)/") })
+        else { return url }
+        let version = lowered
+            .split(separator: "/")
+            .first { $0.first?.isNumber == true && $0.contains(".") }
+            .map(String.init) ?? ""
+        return "CC \(kind.uppercased()) \(version)".trimmingCharacters(in: .whitespaces)
     }
 }

@@ -28,6 +28,16 @@ public struct Headword: Hashable, Sendable {
     public var scriptsDiffer: Bool {
         traditional != nil
     }
+
+    /// Both spellings, deduplicated.
+    ///
+    /// Anything derived from headwords — the segmentation lexicon, the
+    /// per-character reading table — has to cover both, or traditional text
+    /// gets no words in the matcher and no fallback pinyin.
+    public var bothScripts: [String] {
+        guard let traditional else { return [simplified] }
+        return [simplified, traditional]
+    }
 }
 
 /// A reference from one entry to another, as it appears inside a gloss.

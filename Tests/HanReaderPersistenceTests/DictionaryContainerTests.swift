@@ -154,7 +154,10 @@ struct DictionaryContainerTests {
     @Test("CC-CEDICT attribution states the changes made")
     func ccCEDICTAttribution() {
         let metadata = DictionaryMetadata.ccCEDICT(
-            entryCount: 1, sourceVersion: nil, parserVersion: 1,
+            entryCount: 1,
+            sourceVersion: nil,
+            licenceURL: "https://creativecommons.org/licenses/by-sa/4.0/",
+            parserVersion: 1,
         )
         #expect(metadata.licence == "CC BY-SA 4.0")
         #expect(metadata.attribution.contains("Changes made:"))

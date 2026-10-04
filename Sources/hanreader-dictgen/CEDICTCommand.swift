@@ -53,17 +53,32 @@ struct CompileCEDICT: ParsableCommand {
         guard parsed.entries.count >= minimumEntries else {
             throw CompileError.tooFewEntries(got: parsed.entries.count, expected: minimumEntries)
         }
-        // The file states its own entry count. If ours disagrees, one of the
-        // two is wrong and it is not safe to guess which.
-        if let declared = parsed.metadata["entries"].flatMap(Int.init),
-           declared != parsed.entries.count
-        {
-            throw CompileError.entryCountMismatch(declared: declared, parsed: parsed.entries.count)
+        // The file states its own entry count, and CC-CEDICT always does.
+        // Treating a missing header as "nothing to check" would let a
+        // truncated or rewritten source lose entries down to the floor and
+        // still compile, so its absence is itself a failure.
+        guard let declaredCount = parsed.metadata["entries"].flatMap(Int.init) else {
+            throw CompileError.missingHeader("entries")
+        }
+        guard declaredCount == parsed.entries.count else {
+            throw CompileError.entryCountMismatch(
+                declared: declaredCount,
+                parsed: parsed.entries.count,
+            )
+        }
+
+        // The licence is read from the source, never assumed. This snapshot
+        // declares BY-SA 3.0 while current CC-CEDICT is BY-SA 4.0, so a
+        // hardcoded value would attach a licence claim the source contradicts
+        // -- the one mistake this project can least afford.
+        guard let declaredLicence = parsed.metadata["license"] else {
+            throw CompileError.missingHeader("license")
         }
 
         let metadata = DictionaryMetadata.ccCEDICT(
             entryCount: parsed.entries.count,
             sourceVersion: parsed.metadata["date"] ?? parsed.metadata["version"],
+            licenceURL: declaredLicence,
             parserVersion: Self.parserVersion,
         )
 
@@ -88,12 +103,19 @@ struct CompileCEDICT: ParsableCommand {
     }
 
     enum CompileError: Error, CustomStringConvertible {
+        case missingHeader(String)
         case unparsedLines(count: Int, samples: [String])
         case tooFewEntries(got: Int, expected: Int)
         case entryCountMismatch(declared: Int, parsed: Int)
 
         var description: String {
             switch self {
+            case let .missingHeader(key):
+                """
+                the source has no `#! \(key)=` header. CC-CEDICT always carries \
+                one, so its absence means this is not the file it claims to be \
+                — and the checks that depend on it cannot run.
+                """
             case let .unparsedLines(count, samples):
                 """
                 \(count) line(s) could not be parsed, which means the upstream \

@@ -66,16 +66,21 @@ public enum LexiconBuilder {
         var best: [String: Double] = [:]
 
         for entry in entries {
-            let word = entry.headword.simplified
-            let length = word.count
-            guard length >= 1, length <= maximumWordLength else { continue }
-            guard word.allSatisfy(\.isHan) else { continue }
             guard entry.senses.contains(where: { $0.kind == .definition }) else { continue }
 
-            // More senses suggests a more established word, which is the only
-            // frequency-like signal CC-CEDICT offers.
-            let score = weight(length: length, senseCount: entry.senses.count)
-            best[word] = max(best[word] ?? 0, score)
+            // Both scripts. Deriving only from the simplified form leaves
+            // traditional text with no words in the matcher at all, so it
+            // would be segmented character by character.
+            for word in entry.headword.bothScripts {
+                let length = word.count
+                guard length >= 1, length <= maximumWordLength else { continue }
+                guard word.allSatisfy(\.isHan) else { continue }
+
+                // More senses suggests a more established word, which is the
+                // only frequency-like signal CC-CEDICT offers.
+                let score = weight(length: length, senseCount: entry.senses.count)
+                best[word] = max(best[word] ?? 0, score)
+            }
         }
 
         return best
@@ -124,8 +129,6 @@ public enum LexiconBuilder {
         var byCharacter: [Character: [String: Candidate]] = [:]
 
         for entry in entries {
-            let word = entry.headword.simplified
-            guard word.count == 1, let character = word.first, character.isHan else { continue }
             guard let syllable = entry.reading.compactMap({ token -> PinyinSyllable? in
                 if case let .syllable(syllable) = token {
                     return syllable
@@ -142,26 +145,33 @@ public enum LexiconBuilder {
             )
             // Keep the strongest candidate per distinct reading, so the same
             // reading appearing in several entries does not crowd out others.
-            let existing = byCharacter[character]?[candidate.numeric.lowercased()]
-            if existing == nil || candidate.senseCount > (existing?.senseCount ?? 0) {
-                byCharacter[character, default: [:]][candidate.numeric.lowercased()] = candidate
+            // Both scripts, or a traditional character gets no fallback
+            // pinyin at all: 對 对 [dui4] would give a reading for 对 and
+            // none for 對.
+            for word in entry.headword.bothScripts {
+                guard word.count == 1, let character = word.first, character.isHan else { continue }
+
+                // Keyed on the EXACT reading, not a lowercased one. Folding
+                // `Su4` and `su4` together discards one before the
+                // lowercase-first ordering ever runs, so a surname with more
+                // senses silently replaces the reading wanted in prose.
+                //
+                // Compared with the same rule used for ranking, so a
+                // reference-only entry cannot displace a real definition
+                // merely by carrying more senses.
+                if let existing = byCharacter[character]?[candidate.numeric] {
+                    if isBetter(candidate, existing) {
+                        byCharacter[character, default: [:]][candidate.numeric] = candidate
+                    }
+                } else {
+                    byCharacter[character, default: [:]][candidate.numeric] = candidate
+                }
             }
         }
 
         var readings: [CharacterReading] = []
         for (character, candidates) in byCharacter {
-            let ordered = candidates.values.sorted { lhs, rhs in
-                if lhs.isCapitalised != rhs.isCapitalised {
-                    return !lhs.isCapitalised
-                }
-                if lhs.hasDefinition != rhs.hasDefinition {
-                    return lhs.hasDefinition
-                }
-                if lhs.senseCount != rhs.senseCount {
-                    return lhs.senseCount > rhs.senseCount
-                }
-                return lhs.numeric < rhs.numeric
-            }
+            let ordered = candidates.values.sorted(by: isBetter)
             for (rank, candidate) in ordered.enumerated() {
                 readings.append(CharacterReading(
                     character: character,
@@ -174,6 +184,30 @@ public enum LexiconBuilder {
         return readings.sorted {
             ($0.character, $0.rank) < ($1.character, $1.rank)
         }
+    }
+
+    /// Which of two candidate readings for a character should rank higher.
+    ///
+    /// Used both for ordering and for choosing between duplicates, so that a
+    /// candidate cannot win the deduplication on one rule and then lose the
+    /// ordering on another.
+    ///
+    /// 1. Lowercase over capitalised — capitals mark surnames and proper
+    ///    nouns, rarely the reading wanted for a character in prose.
+    /// 2. A real definition over a bare cross-reference.
+    /// 3. More senses, as a proxy for how established the reading is.
+    /// 4. Alphabetical, purely so the output is deterministic.
+    private static func isBetter(_ lhs: Candidate, _ rhs: Candidate) -> Bool {
+        if lhs.isCapitalised != rhs.isCapitalised {
+            return !lhs.isCapitalised
+        }
+        if lhs.hasDefinition != rhs.hasDefinition {
+            return lhs.hasDefinition
+        }
+        if lhs.senseCount != rhs.senseCount {
+            return lhs.senseCount > rhs.senseCount
+        }
+        return lhs.numeric < rhs.numeric
     }
 
     // MARK: - Syllable inventory

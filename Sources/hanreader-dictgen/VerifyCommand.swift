@@ -88,15 +88,25 @@ struct VerifyDictionary: ParsableCommand {
     /// A spot check rather than a sample: each is here because it would catch
     /// a different kind of regression.
     private func checkKnownWords(_ container: DictionaryContainer) throws {
+        // Checked through the lexicon as well as through lookup. A lexicon
+        // regression that drops 中国 while keeping 80,000 other words breaks
+        // segmentation for it, and an entry-count check cannot see that.
+        let lexicon = try Set(container.lexicon().map(\.word))
+
         for expectation in Self.expectations {
             let found = try container.entries(for: expectation.word)
-            guard found.count >= expectation.minimum else {
-                throw VerifyError.missingWord(
+            let readings = Set(found.map(\.readingKey))
+            let missing = expectation.readings.subtracting(readings)
+            guard missing.isEmpty else {
+                throw VerifyError.missingReadings(
                     expectation.word,
-                    found: found.count,
-                    expected: expectation.minimum,
+                    missing: missing.sorted(),
+                    found: readings.sorted(),
                     note: expectation.note,
                 )
+            }
+            if expectation.inLexicon, !lexicon.contains(expectation.word) {
+                throw VerifyError.missingLexeme(expectation.word)
             }
         }
 
@@ -104,27 +114,61 @@ struct VerifyDictionary: ParsableCommand {
         // dictionary lists as a unit. Without it a reader using a Russian
         // dictionary sees pinyin on almost nothing, since 77% of BKRS entries
         // carry no reading.
-        for character in "学习中文很有趣" where try container.readings(forCharacter: character).isEmpty {
+        for character in "学习中文很有趣學習們對"
+            where try container.readings(forCharacter: character).isEmpty
+        {
             throw VerifyError.missingCharacterReading(character)
         }
     }
 
     private struct Expectation {
         let word: String
-        let minimum: Int
+        let readings: Set<String>
+        let inLexicon: Bool
         let note: String
     }
 
+    /// Each expectation names the readings it must find, not merely how many
+    /// entries exist. Counting alone passes a container holding two 了 rows
+    /// that are both `le5`, which is precisely the regression the 了 check is
+    /// supposed to catch.
     private static let expectations = [
         Expectation(
             word: "和",
-            minimum: 6,
+            readings: ["he2", "he4", "hu2", "huo2", "huo4"],
+            inLexicon: true,
             note: "homographs survive — the prototype kept one of eight",
         ),
-        Expectation(word: "了", minimum: 2, note: "both readings, le and liao"),
-        Expectation(word: "中国", minimum: 1, note: "an ordinary two-character word"),
-        Expectation(word: "北京", minimum: 1, note: "a capitalised proper noun"),
-        Expectation(word: "略", minimum: 1, note: "a u: base, lu:e4"),
+        Expectation(
+            word: "了",
+            readings: ["le5", "liao3"],
+            inLexicon: true,
+            note: "both readings, not two copies of one",
+        ),
+        Expectation(
+            word: "中国",
+            readings: ["Zhong1 guo2"],
+            inLexicon: true,
+            note: "an ordinary two-character word",
+        ),
+        Expectation(
+            word: "中國",
+            readings: ["Zhong1 guo2"],
+            inLexicon: true,
+            note: "the same word in traditional script",
+        ),
+        Expectation(
+            word: "北京",
+            readings: ["Bei3 jing1"],
+            inLexicon: true,
+            note: "a capitalised proper noun",
+        ),
+        Expectation(
+            word: "略",
+            readings: ["lu:e4"],
+            inLexicon: true,
+            note: "a u: base, where the tone mark lands on the e",
+        ),
     ]
 
     private func measureLookups(_ container: DictionaryContainer) throws {
@@ -146,7 +190,8 @@ struct VerifyDictionary: ParsableCommand {
         case entryCountMismatch(recorded: Int, actual: Int)
         case tooFew(what: String, got: Int, expected: Int)
         case lexemeTooLong(Int)
-        case missingWord(String, found: Int, expected: Int, note: String)
+        case missingReadings(String, missing: [String], found: [String], note: String)
+        case missingLexeme(String)
         case missingCharacterReading(Character)
 
         var description: String {
@@ -168,8 +213,16 @@ struct VerifyDictionary: ParsableCommand {
                 \(LexiconBuilder.maximumWordLength)-character cap; maximum-matching \
                 would swallow whole clauses
                 """
-            case let .missingWord(word, found, expected, note):
-                "\(word): found \(found) entries, expected at least \(expected) — \(note)"
+            case let .missingReadings(word, missing, found, note):
+                """
+                \(word): missing reading(s) \(missing.joined(separator: ", ")); \
+                found \(found.joined(separator: ", ")) — \(note)
+                """
+            case let .missingLexeme(word):
+                """
+                \(word) is not in the segmentation lexicon, so text containing \
+                it would be split character by character
+                """
             case let .missingCharacterReading(character):
                 "no reading for \(character); the per-character pinyin fallback is broken"
             }
