@@ -215,6 +215,13 @@ jobs:
     name: Architecture boundaries
     runs-on: ubuntu-latest
     container: swift:6.2
+    defaults:
+      run:
+        # Container jobs default to `sh -e`, which has neither `set -o pipefail`
+        # nor process substitution. The Swift images are Ubuntu-based, so bash
+        # is present; ask for it explicitly rather than writing POSIX-only
+        # scripts in a repo where every other job gets bash by default.
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
