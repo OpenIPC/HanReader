@@ -59,6 +59,13 @@ enum RevealMode: String, CaseIterable, Sendable, Hashable {
     /// nothing.
     case allOccurrences
     /// Reveal only the word that was tapped.
+    ///
+    /// Session-only. The store keys revealed words on `(text, word)`, so
+    /// there is nowhere to record *which* 的 was revealed — and writing the
+    /// word instead would light up every occurrence on reopening, which is
+    /// the opposite of what this mode is for. Persisting per-instance
+    /// reveals needs a schema change, and is not worth one until somebody
+    /// asks for it.
     case thisInstance
 }
 

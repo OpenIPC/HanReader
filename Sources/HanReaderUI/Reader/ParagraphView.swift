@@ -20,15 +20,17 @@ import SwiftUI
 struct ParagraphView: View {
     let block: TextBlock
     let style: ReaderStyle
-    let readings: [TokenID: TokenReading]
+    /// Readings keyed by word, not by token: bounded by the reader's
+    /// vocabulary rather than by the length of the book.
+    let readings: [String: TokenReading]
     let selection: TokenID?
-    /// Tokens whose readings are shown.
+    /// Which words are revealed, and in which of the two senses.
     ///
-    /// Resolved by the model from the revealed *words*, so this view never has
-    /// to know whether reveal applies to one instance or to every occurrence
-    /// of a lemma. That policy is the fix for the prototype's single
-    /// `Set<String>`, and it belongs with the state, not with the drawing.
-    let revealed: Set<TokenID>
+    /// Asked per token rather than handed a prepared set of token ids. For a
+    /// book-length text that set would be recomputed over every token in the
+    /// document on each tap, and it would grow with the document rather than
+    /// with the reader's vocabulary.
+    let reveal: RevealSet
     let onTap: (TokenID) -> Void
 
     /// Tokens paired with their precomputed spacing and break flags.
@@ -37,16 +39,16 @@ struct ParagraphView: View {
     init(
         block: TextBlock,
         style: ReaderStyle,
-        readings: [TokenID: TokenReading],
+        readings: [String: TokenReading],
         selection: TokenID?,
-        revealed: Set<TokenID>,
+        reveal: RevealSet,
         onTap: @escaping (TokenID) -> Void,
     ) {
         self.block = block
         self.style = style
         self.readings = readings
         self.selection = selection
-        self.revealed = revealed
+        self.reveal = reveal
         self.onTap = onTap
         flow = zip(block.tokens, ReaderFlow.flowValues(for: block.tokens, style: style))
             .map(FlowToken.init)
@@ -65,8 +67,8 @@ struct ParagraphView: View {
                 ForEach(flow) { entry in
                     TokenView(
                         token: entry.token,
-                        reading: readings[entry.id],
-                        emphasis: emphasis(of: entry.id),
+                        reading: readings[entry.token.text],
+                        emphasis: emphasis(of: entry.token),
                         style: style,
                         onTap: onTap,
                     )
@@ -84,11 +86,11 @@ struct ParagraphView: View {
         }
     }
 
-    private func emphasis(of id: TokenID) -> TokenEmphasis {
-        if id == selection {
+    private func emphasis(of token: Token) -> TokenEmphasis {
+        if token.id == selection {
             return .selected
         }
-        return revealed.contains(id) ? .revealed : .plain
+        return reveal.reveals(token) ? .revealed : .plain
     }
 
     /// The paragraph as continuous text, annotated with its language.

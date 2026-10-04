@@ -40,7 +40,6 @@ struct FixtureReader: View {
     @State private var fontSize = 22.0
     @State private var spacing = WordSpacing.separated
     @State private var selection: TokenID?
-    @State private var revealedWords: Set<String> = []
     @State private var topBlock: Int?
 
     /// Dynamic Type as a number.
@@ -76,28 +75,22 @@ struct FixtureReader: View {
         ReaderFixtures.prose
     }
 
-    /// Tokens whose readings are shown.
+    /// Which words show their reading.
     ///
     /// Every occurrence of a revealed word, which is the prototype's default
-    /// behaviour and so what fidelity requires — but derived here from a set
-    /// of *words*, with the selected token tracked separately. That separation
-    /// is what makes tapping a second instance of an already-revealed word
-    /// select it instead of appearing to do nothing.
-    private var revealed: Set<TokenID> {
-        var tokens = ReaderFixtures.tokens(matching: revealedWords, in: document)
-        if let selection {
-            tokens.insert(selection)
-        }
-        return tokens
-    }
+    /// behaviour and so what fidelity requires — but held as a set of *words*
+    /// with selection tracked separately. That separation is what makes
+    /// tapping a second instance of an already-revealed word select it
+    /// instead of appearing to do nothing.
+    @State private var reveal = RevealSet(mode: .allOccurrences)
 
     var body: some View {
         ReaderSurface(
             document: document,
             style: style,
-            readings: ReaderFixtures.readings(for: document),
+            readings: ReaderFixtures.readingsByWord,
             selection: selection,
-            revealed: revealed,
+            reveal: reveal,
             onTap: select,
             topBlock: $topBlock,
         )
@@ -152,10 +145,10 @@ struct FixtureReader: View {
         guard let token = document[id] else { return }
         if selection == id {
             selection = nil
-            revealedWords.remove(token.text)
+            reveal.hide(token)
         } else {
             selection = id
-            revealedWords.insert(token.text)
+            reveal.reveal(token)
         }
     }
 }

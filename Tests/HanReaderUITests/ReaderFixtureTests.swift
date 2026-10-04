@@ -42,9 +42,9 @@ struct ReaderFixtureTests {
     /// lines would differ in height according to dictionary coverage.
     @Test("Contains at least one word with no reading")
     func coversAWordWithNoReading() {
-        let readings = ReaderFixtures.readings(for: document)
+        let readings = ReaderFixtures.readingsByWord
         let words = document.blocks.flatMap(\.tokens).filter(\.isLookupCandidate)
-        #expect(words.contains { readings[$0.id] == nil })
+        #expect(words.contains { readings[$0.text] == nil })
     }
 
     @Test("Every fixture reading is actually used")
@@ -68,17 +68,17 @@ struct ReaderFixtureTests {
 
     @Test("Selecting a lemma matches every occurrence of it")
     func lemmaMatchesEveryOccurrence() {
-        let matched = ReaderFixtures.tokens(matching: ["了"], in: document)
+        let reveal = ReaderFixtures.reveal(of: ["了"])
+        let matched = document.blocks.flatMap(\.tokens).filter(reveal.reveals)
         // 了 appears three times, once in each of the three prose paragraphs:
         // 举行了阅兵式 · 笑了笑 · 我拍了三个照片.
         #expect(matched.count == 3)
-        for id in matched {
-            #expect(document[id]?.text == "了")
-        }
+        #expect(matched.allSatisfy { $0.text == "了" })
     }
 
     @Test("An unknown lemma matches nothing")
     func unknownLemmaMatchesNothing() {
-        #expect(ReaderFixtures.tokens(matching: ["龘"], in: document).isEmpty)
+        let reveal = ReaderFixtures.reveal(of: ["龘"])
+        #expect(!document.blocks.flatMap(\.tokens).contains(where: reveal.reveals))
     }
 }
