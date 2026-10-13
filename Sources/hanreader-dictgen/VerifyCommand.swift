@@ -19,6 +19,12 @@ struct VerifyDictionary: ParsableCommand {
 
     @Argument(help: "Path to the .hanreaderdict file.") var input: String
 
+    /// Defaults sized for the bundled dictionary, which is what this command
+    /// was written to guard: the failure it catches is a parser refactor that
+    /// silently halves it, where everything still builds and words simply
+    /// stop being found. They are applied only to the format they describe —
+    /// a container compiled from someone's own DSL dictionary may legitimately
+    /// hold a hundred entries — and are options so a caller can state its own.
     @Option(help: "Fail if fewer than this many entries are present.") var minimumEntries = 100_000
 
     @Option(help: "Fail if fewer than this many lexemes are present.") var minimumLexemes = 80000
@@ -37,21 +43,17 @@ struct VerifyDictionary: ParsableCommand {
         }
 
         let entryCount = try container.entryCount()
-        let lexemes = try container.lexicon()
+        let lexemeCount = try container.lexemeCount()
+        let longestLexeme = try container.longestLexeme()
         let bases = try container.syllableBases()
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
 
-        print("""
-        \(metadata.displayName) (\(metadata.slug))
-          licence:       \(metadata.licence)
-          source:        \(metadata.sourceVersion ?? "unspecified")
-          parser:        v\(metadata.parserVersion)
-          entries:       \(entryCount)
-          lexemes:       \(lexemes.count)
-          syllables:     \(bases.count) bases
-          size:          \(size / 1_048_576) MB
-          open:          \(String(format: "%.1f", openTime * 1000)) ms
-        """)
+        report(metadata: metadata, openTime: openTime, counts: Counts(
+            entries: entryCount,
+            lexemes: lexemeCount,
+            bases: bases.count,
+            bytes: size,
+        ))
 
         // Attribution is a licence obligation, not a nicety, so its absence is
         // a hard failure rather than a warning.
@@ -61,26 +63,63 @@ struct VerifyDictionary: ParsableCommand {
         guard entryCount == metadata.entryCount else {
             throw VerifyError.entryCountMismatch(recorded: metadata.entryCount, actual: entryCount)
         }
-        guard entryCount >= minimumEntries else {
+        let isBundled = metadata.format == "cc-cedict"
+        guard !isBundled || entryCount >= minimumEntries else {
             throw VerifyError.tooFew(what: "entries", got: entryCount, expected: minimumEntries)
         }
-        guard lexemes.count >= minimumLexemes else {
-            throw VerifyError.tooFew(what: "lexemes", got: lexemes.count, expected: minimumLexemes)
+        guard !isBundled || lexemeCount >= minimumLexemes else {
+            throw VerifyError.tooFew(what: "lexemes", got: lexemeCount, expected: minimumLexemes)
+        }
+        guard entryCount > 0 else {
+            throw VerifyError.tooFew(what: "entries", got: 0, expected: 1)
         }
         // A lexeme longer than the cap means maximum-matching could swallow a
         // whole clause, which is the specific failure the cap prevents.
-        if let longest = lexemes.map(\.characterLength).max(),
-           longest > LexiconBuilder.maximumWordLength
-        {
-            throw VerifyError.lexemeTooLong(longest)
+        if longestLexeme > LexiconBuilder.maximumWordLength {
+            throw VerifyError.lexemeTooLong(longestLexeme)
         }
 
-        try checkKnownWords(container)
+        // The spot checks below are CC-CEDICT's own words, and every check
+        // above this line is structural. A container compiled from someone's
+        // DSL dictionary is a valid container that does not contain 中国 with
+        // the reading `zhong1 guo2`, and failing it for that would make
+        // `verify` useless for the format this milestone added.
+        if isBundled {
+            try checkKnownWords(container)
+        } else {
+            print("  (content checks are CC-CEDICT's; skipped for \(metadata.format))")
+        }
 
         if benchmark {
             try measureLookups(container)
         }
         print("  OK")
+    }
+
+    /// What the container turned out to hold.
+    private struct Counts {
+        let entries: Int
+        let lexemes: Int
+        let bases: Int
+        let bytes: Int
+    }
+
+    private func report(
+        metadata: DictionaryMetadata,
+        openTime: TimeInterval,
+        counts: Counts,
+    ) {
+        print("""
+        \(metadata.displayName) (\(metadata.slug))
+          licence:       \(metadata.licence)
+          source:        \(metadata.sourceVersion ?? "unspecified")
+          parser:        v\(metadata.parserVersion)
+          entries:       \(counts.entries)
+          lexemes:       \(counts.lexemes)
+          syllables:     \(counts.bases) bases
+          size:          \(counts.bytes / 1_048_576) MB
+          open:          \(String(format: "%.1f", openTime * 1000)) ms
+        """)
     }
 
     /// Words that must be findable, with the reading they must have.

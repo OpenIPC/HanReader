@@ -33,11 +33,13 @@ struct Dictgen: AsyncParsableCommand {
         repository keeps the reviewable .u8 text and the app ships a database \
         it only has to open.
 
-        The dsl subcommand, for ABBYY DSL dictionaries such as BKRS, arrives \
-        in milestone M6.
+        The dsl subcommand compiles an ABBYY DSL dictionary such as 大БКРС. \
+        That source is the reader's own file and is never in this repository, \
+        so it is not a build step — and interrupting it is safe, since the \
+        import resumes from the last committed batch.
         """,
         version: HanReaderCore.version,
-        subcommands: [CompileCEDICT.self, VerifyDictionary.self],
+        subcommands: [CompileCEDICT.self, CompileDSL.self, VerifyDictionary.self],
     )
 
     func run() async throws {

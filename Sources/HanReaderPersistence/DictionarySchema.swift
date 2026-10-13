@@ -20,7 +20,7 @@ enum DictionarySchema {
     /// Distinct from a parser version: no schema migration can repair data
     /// that was parsed wrongly, so a parser fix invalidates a container
     /// through `meta.parserVersion` and triggers a rebuild instead.
-    static let formatVersion = 1
+    static let formatVersion = 3
 
     static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -31,6 +31,30 @@ enum DictionarySchema {
             try createLexemeTable(db)
             try createCharReadingTable(db)
             try createSyllableBaseTable(db)
+        }
+
+        // A separate migration rather than an edit to v1, even though nothing
+        // has been released yet. A container is a file on a reader's disk the
+        // moment they import a dictionary, and the habit of editing the
+        // migration that built it is the one that eventually destroys
+        // somebody's data.
+        migrator.registerMigration("v2_resumable_import") { db in
+            try addSourceAnchors(db)
+            try createImportJobTable(db)
+        }
+
+        // The denormalised first gloss, written since v1 and read by nothing.
+        // On a BKRS container it is **160 MB** — 3,442,623 rows of Cyrillic
+        // prose that is already inside the sense payload beside it. It was
+        // there so a result list could render without decoding a payload per
+        // row; with the compact codec that decode is microseconds for the ten
+        // rows a list shows, and 160 MB is not a reasonable price for it. If
+        // a list ever does need it, it can come back as a short prefix rather
+        // than a whole copy.
+        migrator.registerMigration("v3_drop_summary") { db in
+            try db.alter(table: "entry") { table in
+                table.drop(column: "summary")
+            }
         }
 
         return migrator
@@ -123,6 +147,78 @@ enum DictionarySchema {
     private static func createSyllableBaseTable(_ db: Database) throws {
         try db.create(table: "syllableBase") { table in
             table.column("base", .text).notNull().primaryKey()
+        }
+    }
+
+    // MARK: - v2: resumable import
+
+    /// Where each entry came from in the source.
+    ///
+    /// Only an import that can be interrupted needs these, which is why they
+    /// are not in v1. A resumed import deletes everything at or past its
+    /// checkpoint before writing again, so a batch that was partly committed
+    /// cannot leave duplicates behind — the belt to the braces of writing the
+    /// rows and the checkpoint in one transaction.
+    private static func addSourceAnchors(_ db: Database) throws {
+        try db.alter(table: "entry") { table in
+            table.add(column: "sourceFile", .integer).notNull().defaults(to: 0)
+            table.add(column: "sourceOffset", .integer).notNull().defaults(to: 0)
+        }
+        try db.create(
+            index: "entry_on_source",
+            on: "entry",
+            columns: ["sourceFile", "sourceOffset"],
+        )
+    }
+
+    /// The one in-progress import, if there is one.
+    ///
+    /// Resumability is a requirement rather than a refinement: a BKRS set is
+    /// ~350 MB of UTF-16, and on iOS the app will be suspended or killed part
+    /// way through. One row, because a container holds one dictionary.
+    ///
+    /// The source is identified by a fingerprint rather than by a path. A
+    /// path is the wrong anchor on iOS, where the container directory's UUID
+    /// changes across installs and restores — the same mistake the
+    /// predecessor made storing absolute audio paths.
+    ///
+    /// The fingerprint covers **everything that affects the output**, which
+    /// is more than the file the reader picked: the name, size and
+    /// modification time of *every* volume, and the syllable inventory the
+    /// readings were split with. Checking only the first volume lets a
+    /// changed third volume resume onto entries from the old one, and
+    /// re-running with a different `--bases` mixes readings parsed two ways.
+    /// Both produce a dictionary that is half one thing and half another, and
+    /// report success.
+    private static func createImportJobTable(_ db: Database) throws {
+        try db.create(table: "importJob") { table in
+            // A single row, enforced rather than assumed.
+            table.column("id", .integer).notNull().primaryKey().check { $0 == 1 }
+
+            table.column("fileIndex", .integer).notNull()
+            table.column("byteOffset", .integer).notNull()
+            table.column("fileCount", .integer).notNull()
+
+            // The first volume's name, for messages only.
+            table.column("sourceName", .text).notNull()
+            table.column("sourceFingerprint", .text).notNull()
+            table.column("totalBytes", .integer).notNull()
+
+            // A parser fix invalidates what was already written, so a resume
+            // across versions starts again rather than stitching output from
+            // two parsers together.
+            table.column("parserVersion", .integer).notNull()
+
+            table.column("entriesWritten", .integer).notNull()
+            table.column("cardsRead", .integer).notNull()
+            table.column("diagnostics", .integer).notNull()
+
+            // A headword at the end of a file whose article is at the start of
+            // the next one. Zero for a card-aligned set; carried across the
+            // seam for a set someone split on a byte boundary.
+            table.column("leadingHeadwords", .text).notNull()
+
+            table.column("updatedAt", .double).notNull()
         }
     }
 }

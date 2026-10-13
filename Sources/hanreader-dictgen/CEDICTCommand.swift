@@ -91,7 +91,7 @@ struct CompileCEDICT: ParsableCommand {
                 .attributesOfItem(atPath: outputURL.path)[.size] as? Int) ?? 0
             try print("""
             entries:    \(parsed.entries.count)
-            lexemes:    \(container.lexicon().count)
+            lexemes:    \(container.lexemeCount())
             characters: \(container.syllableBases().count) syllable bases
             size:       \(size / 1_048_576) MB
             parse:      \(String(format: "%.2f", parseTime))s

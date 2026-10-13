@@ -58,7 +58,7 @@ public struct DictionaryContainer: Sendable {
         let queue = try DatabaseQueue(path: url.path, configuration: configuration)
         try DictionarySchema.migrator().migrate(queue)
 
-        let encoder = JSONEncoder()
+        let codec = SensePayloadCodecs.current
         var written = 0
 
         for chunk in entries.chunked(into: batchSize) {
@@ -69,15 +69,14 @@ public struct DictionaryContainer: Sendable {
                     try db.execute(sql: """
                         INSERT INTO entry
                             (simplified, traditional, readingNumeric,
-                             readingDisplay, senses, summary)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                             readingDisplay, senses)
+                        VALUES (?, ?, ?, ?, ?)
                     """, arguments: [
                         entry.headword.simplified,
                         entry.headword.traditional,
                         entry.readingKey,
                         entry.readingDisplay,
-                        encoder.encode(entry.senses),
-                        entry.summarySense?.gloss.text ?? "",
+                        codec.encode(entry.senses),
                     ])
                 }
             }
@@ -134,12 +133,15 @@ public struct DictionaryContainer: Sendable {
         }
     }
 
-    private static func writeMetadata(
+    static func writeMetadata(
         _ metadata: DictionaryMetadata,
         to queue: DatabaseQueue,
     ) throws {
         let values: [String: String?] = [
             "formatVersion": String(DictionarySchema.formatVersion),
+            // Which codec wrote the sense payloads, so a reader picks the one
+            // that can read them rather than assuming the current one.
+            "sensePayloadCodec": type(of: SensePayloadCodecs.current).identifier,
             "slug": metadata.slug,
             "displayName": metadata.displayName,
             "format": metadata.format,
@@ -165,6 +167,22 @@ public struct DictionaryContainer: Sendable {
     }
 
     // MARK: - Reading
+
+    /// The codec this container's sense payloads were written with.
+    ///
+    /// Read from the file rather than assumed, which is what lets a new codec
+    /// land without invalidating the dictionaries already on disk — and what
+    /// makes a container written by a *newer* build say so plainly instead of
+    /// decoding into plausible nonsense.
+    public func sensePayloadCodec() throws -> any SensePayloadCodec {
+        let identifier = try dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM meta WHERE key = 'sensePayloadCodec'",
+            )
+        }
+        return try SensePayloadCodecs.named(identifier)
+    }
 
     public func metadata() throws -> DictionaryMetadata? {
         let values = try dbQueue.read { db in
@@ -196,7 +214,7 @@ public struct DictionaryContainer: Sendable {
     /// readings; the prototype's `LIMIT 1` is the bug this signature exists to
     /// make impossible.
     public func entries(for headword: String) throws -> [DictionaryEntry] {
-        let decoder = JSONDecoder()
+        let codec = try sensePayloadCodec()
         return try dbQueue.read { db in
             // Matched against BOTH scripts. Storing the traditional form and
             // then only ever querying the simplified one means a reader of
@@ -213,7 +231,7 @@ public struct DictionaryContainer: Sendable {
                         traditional: row["traditional"],
                     ),
                     reading: Pinyin.parse(numeric: row["readingNumeric"]),
-                    senses: decoder.decode([Sense].self, from: row["senses"]),
+                    senses: codec.decode(row["senses"]),
                 )
             }
         }
@@ -252,9 +270,119 @@ public struct DictionaryContainer: Sendable {
         }
     }
 
+    /// How many words the segmentation lexicon holds.
+    ///
+    /// Separate from `lexicon()`, which returns all of them. A BKRS container
+    /// has 1,806,893, and fetching them to print one number took 450 MB — in
+    /// a `--verbose` summary, where it looked for a while like the import
+    /// itself had blown its memory ceiling.
+    public func lexemeCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT count(*) FROM lexeme") ?? 0
+        }
+    }
+
+    /// Where each entry came from, in row order.
+    ///
+    /// For verifying that a resumable import stamps each entry with its own
+    /// card rather than with the one that happened to fill its batch.
+    public func sourceOffsets() throws -> [Int] {
+        try dbQueue.read { db in
+            try Int.fetchAll(db, sql: "SELECT sourceOffset FROM entry ORDER BY id")
+        }
+    }
+
+    /// The longest word in the segmentation lexicon, in characters.
+    ///
+    /// Asked of the database rather than by fetching the lexicon: a BKRS
+    /// container holds 1,806,893 lexemes, and loading them to take a maximum
+    /// costs hundreds of megabytes.
+    public func longestLexeme() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT max(charLength) FROM lexeme") ?? 0
+        }
+    }
+
+    /// Every headword in the container, for tests that need to assert over
+    /// all of them rather than look one up.
+    public func headwords() throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT simplified FROM entry ORDER BY id")
+        }
+    }
+
     public func entryCount() throws -> Int {
         try dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM entry") ?? 0
+        }
+    }
+}
+
+// MARK: - Introspection
+
+/// Reading the shape of a container rather than its content.
+///
+/// Used by the tests that assert an import leaves the right indexes behind
+/// and that the retired `summary` column is gone — both things a reader
+/// should never need to ask, and both worth asserting once.
+extension DictionaryContainer {
+    /// The indexes the file actually carries.
+    ///
+    /// For asserting that an import leaves behind the ones a reader needs and
+    /// not the one only the importer wanted.
+    public func indexNames() throws -> Set<String> {
+        try dbQueue.read { db in
+            try Set(String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_schema WHERE type = 'index' AND name IS NOT NULL",
+            ))
+        }
+    }
+
+    /// The columns a table carries, for asserting that one is gone.
+    public func columnNames(of table: String) throws -> Set<String> {
+        try dbQueue.read { db in
+            try Set(db.columns(in: table).map(\.name))
+        }
+    }
+
+    /// Writes a one-entry container with a chosen codec.
+    ///
+    /// Only so a test can build the kind of container an earlier build
+    /// produced, and prove it still opens — which is the whole point of
+    /// recording the codec rather than assuming it.
+    static func writeForTesting(
+        entry: DictionaryEntry,
+        codec: any SensePayloadCodec,
+        metadata: DictionaryMetadata,
+        to url: URL,
+    ) throws {
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+        )
+        let queue = try DatabaseQueue(path: url.path)
+        try DictionarySchema.migrator().migrate(queue)
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO entry
+                    (simplified, traditional, readingNumeric, readingDisplay, senses)
+                VALUES (?, ?, ?, ?, ?)
+            """, arguments: [
+                entry.headword.simplified,
+                entry.headword.traditional,
+                entry.readingKey,
+                entry.readingDisplay,
+                codec.encode(entry.senses),
+            ])
+        }
+        try writeMetadata(metadata, to: queue)
+        try queue.write { db in
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO meta (key, value) VALUES ('sensePayloadCodec', ?)",
+                arguments: [type(of: codec).identifier],
+            )
         }
     }
 }
