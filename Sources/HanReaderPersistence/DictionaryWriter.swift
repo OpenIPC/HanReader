@@ -43,6 +43,40 @@ public import HanReaderCore
 /// The resume path still deletes anything at or past the checkpoint, because a
 /// belt costs one indexed `DELETE` and braces alone are an argument.
 public final class DictionaryWriter {
+    /// When the lookup indexes get built.
+    ///
+    /// They are needed only once an import is finished, and the choice of
+    /// *when* to build them trades the import's two budgets against each
+    /// other. Measured over the full 350 MB BKRS set, same machine, same
+    /// output:
+    ///
+    /// | | time | peak memory | size |
+    /// |---|---|---|---|
+    /// | `.atTheEnd` | **75 s** | 134 MB | **493 MB** |
+    /// | `.whileWriting` | 188 s | **53 MB** | 556 MB |
+    ///
+    /// Building at the end is the ordinary bulk-load shape: one pass over
+    /// rows that are all already there, instead of a random-order insert into
+    /// an 84 MB B-tree three and a half million times. It is also 63 MB
+    /// smaller on disk, because an index built in one pass does not carry the
+    /// page splits that random insertion leaves behind.
+    ///
+    /// Its cost is memory: `CREATE INDEX` is a single atomic statement, so the
+    /// whole new index is dirty at once — about 92 MB of it, which no
+    /// `cache_size`, `temp_store`, `threads`, `soft_heap_limit` or
+    /// `hard_heap_limit` pragma reduces. Measured, not assumed; all five were
+    /// tried.
+    ///
+    /// `.atTheEnd` is the default because compiling a DSL set is a desktop
+    /// operation by design — a Mac compiles it once and a phone imports the
+    /// compiled container — so the import's memory ceiling, which exists for
+    /// iOS, is not the binding constraint on this path. `.whileWriting` is
+    /// there for the day something does run an import where it is.
+    public enum Indexing: Sendable {
+        case atTheEnd
+        case whileWriting
+    }
+
     /// Where the reader got to, recorded at a card boundary.
     ///
     /// A card boundary, not a line or a batch boundary, because it is the only
@@ -135,7 +169,8 @@ public final class DictionaryWriter {
     private let dbQueue: DatabaseQueue
     private let source: Source
     private let lexiconMaximumLength: Int
-    private let encoder = JSONEncoder()
+    private let indexing: Indexing
+    private let codec = SensePayloadCodecs.current
     private var entriesWritten: Int
 
     /// Opens a container at `url`, resuming the job in it when there is one
@@ -154,6 +189,7 @@ public final class DictionaryWriter {
         at url: URL,
         source: Source,
         lexiconMaximumLength: Int = LexiconBuilder.maximumWordLength,
+        indexing: Indexing = .atTheEnd,
     ) throws
         -> (writer: DictionaryWriter, resume: Checkpoint?)
     {
@@ -170,14 +206,7 @@ public final class DictionaryWriter {
         let queue = try DatabaseQueue(path: url.path, configuration: configuration)
         try DictionarySchema.migrator().migrate(queue)
 
-        // A finished import drops this index, so a re-import needs it back.
-        // Here rather than in the migration, because the migration has already
-        // run by the time it is dropped.
-        try queue.write { db in
-            try db.execute(sql: """
-                CREATE INDEX IF NOT EXISTS entry_on_source ON entry (sourceFile, sourceOffset)
-            """)
-        }
+        try prepareIndexes(queue, indexing: indexing)
 
         let stored = try queue.read { db in
             try Row.fetchOne(db, sql: "SELECT * FROM importJob WHERE id = 1")
@@ -201,9 +230,36 @@ public final class DictionaryWriter {
             dbQueue: queue,
             source: source,
             lexiconMaximumLength: lexiconMaximumLength,
+            indexing: indexing,
             entriesWritten: written,
         )
         return (writer, resume)
+    }
+
+    /// Sets up the indexes an import wants, and takes down the ones it does
+    /// not.
+    ///
+    /// A lookup index is maintained per row while it exists, and
+    /// `entry_on_simplified` means a random-order insert into an 84 MB B-tree
+    /// three and a half million times. Nothing queries it until the import is
+    /// over, so it comes down for the duration and is built in one pass at the
+    /// end — the ordinary bulk-load shape.
+    ///
+    /// The source index is the mirror image: wanted only *during* an import,
+    /// for the delete a resume does, and dropped when one finishes.
+    ///
+    /// A container interrupted part way therefore has no lookup indexes. That
+    /// is correct rather than unfortunate — it is not a dictionary yet, and
+    /// the `importJob` row is what says so.
+    private static func prepareIndexes(_ queue: DatabaseQueue, indexing: Indexing) throws {
+        try queue.write { db in
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS entry_on_source ON entry (sourceFile, sourceOffset)
+            """)
+            guard indexing == .atTheEnd else { return }
+            try db.execute(sql: "DROP INDEX IF EXISTS entry_on_simplified")
+            try db.execute(sql: "DROP INDEX IF EXISTS entry_on_traditional")
+        }
     }
 
     /// Makes the container ready to be written into, and says how many
@@ -250,11 +306,13 @@ public final class DictionaryWriter {
         dbQueue: DatabaseQueue,
         source: Source,
         lexiconMaximumLength: Int,
+        indexing: Indexing,
         entriesWritten: Int,
     ) {
         self.dbQueue = dbQueue
         self.source = source
         self.lexiconMaximumLength = lexiconMaximumLength
+        self.indexing = indexing
         self.entriesWritten = entriesWritten
     }
 
@@ -281,15 +339,14 @@ public final class DictionaryWriter {
                 try db.execute(sql: """
                     INSERT INTO entry
                         (simplified, traditional, readingNumeric, readingDisplay,
-                         senses, summary, sourceFile, sourceOffset)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         senses, sourceFile, sourceOffset)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     entry.headword.simplified,
                     entry.headword.traditional,
                     entry.readingKey,
                     entry.readingDisplay,
-                    encoder.encode(entry.senses),
-                    entry.summarySense?.gloss.text ?? "",
+                    codec.encode(entry.senses),
                     sourced.sourceFile,
                     sourced.sourceOffset,
                 ])
@@ -377,6 +434,19 @@ public final class DictionaryWriter {
             // is 53 MB the reader would carry for nothing. The columns stay,
             // so a re-import can rebuild the index and resume as before.
             try db.execute(sql: "DROP INDEX IF EXISTS entry_on_source")
+
+            // And now the ones a reader needs, built in one pass over rows
+            // that are all already there rather than maintained as they
+            // arrived. Lookup matches BOTH scripts: storing the traditional
+            // form and only ever querying the simplified one means a reader of
+            // traditional text finds nothing at all.
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS entry_on_simplified ON entry (simplified)
+            """)
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS entry_on_traditional ON entry (traditional)
+                WHERE traditional IS NOT NULL
+            """)
             try db.execute(sql: "ANALYZE")
         }
         // Folding the write-ahead log back in leaves one file rather than
@@ -402,7 +472,6 @@ extension DictionaryWriter {
     /// than the 27 MB suggests. The collector keeps five small values per
     /// candidate reading and the entry is released immediately.
     private func writeCharacterReadings() throws {
-        let decoder = JSONDecoder()
         var collector = LexiconBuilder.CharacterReadings()
         try dbQueue.read { db in
             let cursor = try Row.fetchCursor(db, sql: """
@@ -416,7 +485,7 @@ extension DictionaryWriter {
                         traditional: row["traditional"],
                     ),
                     reading: Pinyin.parse(numeric: row["readingNumeric"]),
-                    senses: decoder.decode([Sense].self, from: row["senses"]),
+                    senses: self.codec.decode(row["senses"]),
                 ))
             }
         }
