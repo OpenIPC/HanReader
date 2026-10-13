@@ -2,7 +2,7 @@
 
 public import Foundation
 public import HanReaderCore
-public import HanReaderPersistence
+import HanReaderPersistence
 
 /// How far an import has got.
 public struct DSLImportProgress: Hashable, Sendable {
@@ -26,9 +26,22 @@ public struct DSLImportProgress: Hashable, Sendable {
 public struct DSLImportSummary: Hashable, Sendable {
     public let cardsRead: Int
     public let entriesWritten: Int
+    /// Problems inside the files — unknown markup, an article with no
+    /// headword.
     public let diagnostics: Int
+    /// Problems with the *set*: a volume an `#INCLUDE` names but that is not
+    /// there, or a set longer than discovery will follow. Separate from the
+    /// count above, because a reader has to be told about these whatever the
+    /// import otherwise achieved — a dictionary quietly missing a third of
+    /// itself is the failure they would never notice.
+    public let discovery: [DSLDiagnostic]
     public let resumed: Bool
     public let metadata: DictionaryMetadata
+
+    /// Everything that went wrong, as one headline number.
+    public var totalDiagnostics: Int {
+        diagnostics + discovery.count
+    }
 }
 
 /// Imports an ABBYY DSL dictionary into a container.
@@ -116,8 +129,7 @@ public struct DSLImporter: Sendable {
             at: destination,
             source: DictionaryWriter.Source(
                 name: first.name,
-                size: first.size,
-                modified: first.modified,
+                fingerprint: Self.fingerprint(of: sources, bases: syllableBases),
                 fileCount: sources.count,
                 totalBytes: totalBytes,
                 parserVersion: Self.parserVersion,
@@ -153,6 +165,10 @@ public struct DSLImporter: Sendable {
             cardsRead: run.state.checkpoint.cardsRead,
             entriesWritten: writer.count,
             diagnostics: run.state.checkpoint.diagnostics,
+            // Discovery's own complaints are not in the checkpoint, because
+            // they are not something a resume re-reads. Reported here so a
+            // dictionary missing a volume cannot look finished.
+            discovery: fileSet.diagnostics,
             resumed: resume != nil,
             metadata: metadata,
         )
@@ -178,6 +194,29 @@ public struct DSLImporter: Sendable {
 }
 
 // MARK: - One file at a time
+
+extension DSLImporter {
+    /// Everything the output depends on, as one comparable string.
+    ///
+    /// Spelled out rather than hashed, for two reasons. `Hasher` is seeded per
+    /// process, so `hashValue` is not comparable across runs at all — the bug
+    /// would be invisible and intermittent. And at a couple of kilobytes for a
+    /// three-volume set this costs one row, where a mismatch that wrongly
+    /// restarts a 200-second import costs rather more.
+    ///
+    /// Every volume, not just the one the reader picked: a changed third
+    /// volume with an unchanged first one would otherwise resume onto entries
+    /// from the old version. And the syllable inventory, because it decides
+    /// how a reading is split and so what the cross-dictionary merge key is —
+    /// re-running with a different `--bases` would mix readings parsed two
+    /// ways.
+    static func fingerprint(of sources: [FileDescription], bases: Set<String>) -> String {
+        let files = sources.map {
+            "\($0.name):\($0.size):\(Int($0.modified.timeIntervalSince1970))"
+        }
+        return (files + ["bases"] + bases.sorted()).joined(separator: "|")
+    }
+}
 
 extension DSLImporter {
     /// The mutable half of a run.
@@ -219,23 +258,82 @@ extension DSLImporter {
             batch.reserveCapacity(batchSize)
         }
 
+        /// Commits the pending batch, checkpointed at the card that filled
+        /// it.
+        ///
+        /// The checkpoint is that card's own offset, so it is re-read on
+        /// resume rather than skipped: it is already in the batch being
+        /// committed, and the resume path deletes everything at or past the
+        /// offset first.
+        ///
+        /// A card with no offset was assembled across a file seam, and the
+        /// only point that restarts it is in the *previous* file. Leaving the
+        /// checkpoint where it is re-reads from there, which rebuilds the seam
+        /// correctly; moving it here would resume past the carried headword
+        /// and lose the card. The carried headwords stay for the same reason —
+        /// cleared before this commit, a checkpoint whose frontier is still
+        /// the seam card restarts the next file without that headword, so the
+        /// card's entries are deleted and its article cannot rebuild them.
+        private func commitBatch(
+            frontier: DSLCardRecord,
+            settled: (cards: Int, diagnostics: Int),
+        ) throws {
+            var commit = state.checkpoint
+            commit.cardsRead = settled.cards
+            commit.diagnostics = settled.diagnostics
+            if let offset = frontier.offset {
+                state.checkpoint.byteOffset = offset
+                state.checkpoint.leadingHeadwords = []
+                commit.byteOffset = offset
+                commit.leadingHeadwords = []
+            }
+            try writer.append(batch, checkpoint: commit)
+            batch.removeAll(keepingCapacity: true)
+            lastReport = state.reportIfDue(
+                after: lastReport,
+                written: writer.count,
+                to: report,
+            )
+        }
+
         /// Reads one file of the set, committing a batch whenever one fills.
         func importFile(at index: Int) throws {
-            // Only the file the checkpoint names starts part way in; every
-            // later one starts at its own beginning.
-            let startOffset = index == resume?.fileIndex ? resume?.byteOffset : nil
+            // Only the file the checkpoint names starts part way in, and only
+            // when it names a real card offset. Zero is not one: it is where
+            // the byte-order mark is, and handing it back as a resume point
+            // reads the mark as the first character of the first headword. An
+            // end-of-file checkpoint stores zero precisely to mean "from the
+            // beginning", which is what nil says to the reader.
+            let storedOffset = index == resume?.fileIndex ? (resume?.byteOffset ?? 0) : 0
             var reader = try DSLCardReader(
                 source: DSLFileBytes(url: sources[index].url),
-                resumingAt: startOffset,
+                resumingAt: storedOffset > 0 ? storedOffset : nil,
                 leadingHeadwords: index == state.checkpoint.fileIndex
                     ? state.checkpoint.leadingHeadwords
                     : [],
             )
             state.checkpoint.fileIndex = index
-            state.checkpoint.leadingHeadwords = []
+            var readerDiagnostics = 0
 
             while let record = try reader.next() {
                 try Task.checkCancellation()
+                // The reader's own complaints are counted first, and they
+                // count as *settled*. They describe lines the reader has
+                // already gone past — an article with no headword above it
+                // sits before the card that follows it — so a resume starting
+                // at that card will never see them again, and leaving them out
+                // of its checkpoint loses them for good. Taken per card rather
+                // than at end of file for the same reason.
+                state.checkpoint.diagnostics += reader.diagnostics.count - readerDiagnostics
+                readerDiagnostics = reader.diagnostics.count
+
+                // This card's own totals are not settled, because a resume
+                // re-reads it: counting it on both sides inflates the totals
+                // by one card and its diagnostics per interruption.
+                let settled = (
+                    cards: state.checkpoint.cardsRead,
+                    diagnostics: state.checkpoint.diagnostics,
+                )
                 state.checkpoint.cardsRead += 1
                 let built = builder.entries(from: record.card)
                 state.checkpoint.diagnostics += built.diagnostics.count
@@ -252,37 +350,13 @@ extension DSLImporter {
                 })
 
                 guard batch.count >= batchSize else { continue }
-                // The checkpoint is this card's own offset, so the card is
-                // re-read on resume rather than skipped: it is already in the
-                // batch being committed, and the resume path deletes
-                // everything at or past the offset first.
-                //
-                // A card with no offset was assembled across a file seam, and
-                // the only point that restarts it is in the *previous* file.
-                // Leaving the checkpoint where it was re-reads from there,
-                // which rebuilds the seam correctly; moving it here would
-                // resume past the carried headword and lose the card.
-                if let offset = record.offset {
-                    state.checkpoint.byteOffset = offset
-                }
-                // The stored card count excludes this card, because a resume
-                // re-reads it. Storing the count including it would inflate
-                // the total by one per interruption.
-                var stored = state.checkpoint
-                stored.cardsRead -= 1
-                try writer.append(batch, checkpoint: stored)
-                batch.removeAll(keepingCapacity: true)
-                lastReport = state.reportIfDue(
-                    after: lastReport,
-                    written: writer.count,
-                    to: report,
-                )
+                try commitBatch(frontier: record, settled: settled)
             }
 
             // End of file: the next card is in the next file, so the
             // checkpoint moves past this one in the same commit as its last
             // batch.
-            state.checkpoint.diagnostics += reader.diagnostics.count
+            state.checkpoint.diagnostics += reader.diagnostics.count - readerDiagnostics
             state.checkpoint.fileIndex = index + 1
             state.checkpoint.byteOffset = 0
             state.checkpoint.leadingHeadwords = reader.trailingHeadwords

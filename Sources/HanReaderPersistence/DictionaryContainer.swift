@@ -274,6 +274,25 @@ public struct DictionaryContainer: Sendable {
         }
     }
 
+    /// The longest word in the segmentation lexicon, in characters.
+    ///
+    /// Asked of the database rather than by fetching the lexicon: a BKRS
+    /// container holds 1,806,893 lexemes, and loading them to take a maximum
+    /// costs hundreds of megabytes.
+    public func longestLexeme() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT max(charLength) FROM lexeme") ?? 0
+        }
+    }
+
+    /// Every headword in the container, for tests that need to assert over
+    /// all of them rather than look one up.
+    public func headwords() throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT simplified FROM entry ORDER BY id")
+        }
+    }
+
     public func entryCount() throws -> Int {
         try dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM entry") ?? 0

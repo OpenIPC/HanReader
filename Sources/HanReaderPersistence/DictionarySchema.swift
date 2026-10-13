@@ -163,12 +163,19 @@ enum DictionarySchema {
     /// ~350 MB of UTF-16, and on iOS the app will be suspended or killed part
     /// way through. One row, because a container holds one dictionary.
     ///
-    /// The source is identified by name, size and modification time rather
-    /// than by path. A path is the wrong anchor on iOS, where the container
-    /// directory's UUID changes across installs and restores — the same
-    /// mistake the predecessor made storing absolute audio paths. Size and
-    /// mtime are what answer the question that actually matters on resume:
-    /// is this the same file I was part way through?
+    /// The source is identified by a fingerprint rather than by a path. A
+    /// path is the wrong anchor on iOS, where the container directory's UUID
+    /// changes across installs and restores — the same mistake the
+    /// predecessor made storing absolute audio paths.
+    ///
+    /// The fingerprint covers **everything that affects the output**, which
+    /// is more than the file the reader picked: the name, size and
+    /// modification time of *every* volume, and the syllable inventory the
+    /// readings were split with. Checking only the first volume lets a
+    /// changed third volume resume onto entries from the old one, and
+    /// re-running with a different `--bases` mixes readings parsed two ways.
+    /// Both produce a dictionary that is half one thing and half another, and
+    /// report success.
     private static func createImportJobTable(_ db: Database) throws {
         try db.create(table: "importJob") { table in
             // A single row, enforced rather than assumed.
@@ -178,9 +185,9 @@ enum DictionarySchema {
             table.column("byteOffset", .integer).notNull()
             table.column("fileCount", .integer).notNull()
 
+            // The first volume's name, for messages only.
             table.column("sourceName", .text).notNull()
-            table.column("sourceSize", .integer).notNull()
-            table.column("sourceModified", .double).notNull()
+            table.column("sourceFingerprint", .text).notNull()
             table.column("totalBytes", .integer).notNull()
 
             // A parser fix invalidates what was already written, so a resume

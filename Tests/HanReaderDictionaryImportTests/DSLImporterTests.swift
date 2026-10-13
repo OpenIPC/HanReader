@@ -38,6 +38,37 @@ private struct Workspace: ~Copyable {
         return url
     }
 
+    var bases: Set<String> {
+        ["ai", "le", "liao", "yi", "da", "guo"]
+    }
+
+    /// Plants the job row an interruption would have left.
+    ///
+    /// Needed because a *completed* import clears the job, so a test that
+    /// runs one to the end and then runs it again is testing a fresh import
+    /// and nothing else — which is how three of these tests first passed
+    /// against bugs they were written for.
+    func plantJob(
+        _ checkpoint: DictionaryWriter.Checkpoint,
+        files: [String],
+        bases: Set<String>? = nil,
+    ) throws {
+        let sources = try files.map {
+            try DSLImporter.FileDescription(url: root.appendingPathComponent($0))
+        }
+        let (writer, _) = try DictionaryWriter.open(
+            at: destination,
+            source: DictionaryWriter.Source(
+                name: files[0],
+                fingerprint: DSLImporter.fingerprint(of: sources, bases: bases ?? self.bases),
+                fileCount: files.count,
+                totalBytes: sources.reduce(0) { $0 + $1.size },
+                parserVersion: DSLImporter.parserVersion,
+            ),
+        )
+        try writer.checkpoint(checkpoint)
+    }
+
     func importer(
         from name: String,
         batchSize: Int = DSLImporter.defaultBatchSize,
@@ -47,7 +78,7 @@ private struct Workspace: ~Copyable {
         try DSLImporter(
             fileSet: DSLFileSet.discover(from: root.appendingPathComponent(name)),
             destination: destination,
-            syllableBases: ["ai", "le", "liao", "yi", "da", "guo"],
+            syllableBases: bases,
             batchSize: batchSize,
         )
     }
@@ -105,8 +136,7 @@ struct DSLImporterTests {
             at: workspace.destination,
             source: DictionaryWriter.Source(
                 name: "a.dsl",
-                size: 1,
-                modified: .now,
+                fingerprint: "anything",
                 fileCount: 1,
                 totalBytes: 1,
                 parserVersion: DSLImporter.parserVersion,
@@ -185,39 +215,83 @@ struct DSLImporterTests {
         }
     }
 
-    /// Stamping a whole batch with the offset of the card that filled it is
-    /// what made a resume lose entries: the delete removed the batch and the
-    /// re-read replaced only its last card. Over four interruptions of a
-    /// 574,709-entry import, 14,997 entries vanished and it reported success.
-    @Test("Each entry records its own card's offset")
-    func perEntryOffsets() throws {
+    /// An end-of-file checkpoint stores byte offset zero to mean "from the
+    /// beginning of the next file". Handing that straight back to the byte
+    /// reader starts it *at* the byte-order mark, which then arrives as the
+    /// first character of the first headword — so every multi-file resume at a
+    /// file boundary corrupted one headword, silently.
+    ///
+    /// The job row is planted rather than reached by interrupting, because a
+    /// batch big enough to span a volume reports no progress inside the card
+    /// loop and a batch small enough to report never stops *on* the boundary.
+    /// It is exactly the row a real interruption leaves.
+    @Test("Resuming at a file boundary does not read the byte-order mark")
+    func resumeAtFileBoundary() throws {
         let workspace = try Workspace()
-        try workspace.write("a.dsl", header + cards(30))
-        try workspace.importer(from: "a.dsl", batchSize: 10).run()
+        try workspace.write("a.dsl", header + "#INCLUDE \"b.dsl\"\n\n" + cards(5))
+        try workspace.write("b.dsl", "#NAME \"B\"\n\n" + cards(5, from: 500))
+        try workspace.plantJob(
+            DictionaryWriter.Checkpoint(fileIndex: 1, byteOffset: 0),
+            files: ["a.dsl", "b.dsl"],
+        )
+
+        let summary = try workspace.importer(from: "a.dsl").run()
+        #expect(summary.resumed)
 
         let container = try DictionaryContainer(contentsOf: workspace.destination)
-        let offsets = try container.sourceOffsets()
-        #expect(offsets.count == 30)
-        // Distinct and increasing: one per card, not one per batch.
-        #expect(Set(offsets).count == 30)
-        #expect(offsets == offsets.sorted())
+        // The headword that follows the mark, intact. Read as content, the
+        // mark makes it "\u{FEFF}wdw" and nothing finds it again.
+        #expect(try !container.entries(for: "w" + String(500, radix: 36)).isEmpty)
+        for word in try container.headwords() {
+            #expect(!word.hasPrefix("\u{FEFF}"), "\(word.debugDescription) kept a byte-order mark")
+        }
     }
 
-    /// A different file, or a different parser, cannot be stitched onto what
-    /// is already there — no schema migration repairs output from two
-    /// parsers, and half a dictionary from each is worse than either.
-    @Test("A changed source starts the import again")
-    func changedSourceRestarts() throws {
-        let workspace = try Workspace()
-        try workspace.write("a.dsl", header + cards(20))
-        try workspace.importer(from: "a.dsl", batchSize: 5).run()
+    /// A card whose headword is in one volume and whose article is in the next
+    /// has no resume point in the file it was completed in. Clearing the
+    /// carried headword before that card's batch commits leaves a checkpoint
+    /// that restarts the next file without it, so the card's entries are
+    /// deleted on resume and its article cannot rebuild them.
+    ///
+    /// Interrupted at exactly that card: the first volume holds nothing but
+    /// the dangling headword, so the first batch to commit is the seam card's,
+    /// and the first progress report is therefore the one that follows it.
+    @Test("A seam card survives being the frontier of a checkpoint")
+    func seamCardSurvivesResume() async throws {
+        let seamFiles = { (workspace: borrowing Workspace) throws in
+            try workspace.write("a.dsl", header + "#INCLUDE \"b.dsl\"\n\nwseam\n")
+            try workspace.write(
+                "b.dsl",
+                "#NAME \"B\"\n\n ài\n [m1]разрезанное[/m]\n" + cards(4, from: 900),
+            )
+        }
 
-        // Same name, different content, so size and modification time differ.
-        try workspace.write("a.dsl", header + cards(7))
-        let again = try workspace.importer(from: "a.dsl", batchSize: 5).run()
-        #expect(!again.resumed)
-        #expect(again.entriesWritten == 7)
-        #expect(try DictionaryContainer(contentsOf: workspace.destination).entryCount() == 7)
+        let reference = try Workspace()
+        try seamFiles(reference)
+        let expected = try reference.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(expected.cardsRead == 5)
+
+        let workspace = try Workspace()
+        try seamFiles(workspace)
+        let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
+        let (reports, continuation) = AsyncStream<Int>.makeStream()
+        let task = Task.detached {
+            defer { continuation.finish() }
+            return try importer.run { continuation.yield($0.entriesWritten) }
+        }
+        var iterator = reports.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+        _ = try? await task.value
+
+        let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(resumed.resumed)
+        #expect(resumed.cardsRead == expected.cardsRead)
+
+        let seam = try DictionaryContainer(contentsOf: workspace.destination)
+            .entries(for: "wseam")
+        #expect(seam.count == 1, "the seam card was lost")
+        #expect(seam.first?.senses.first?.gloss.text == "разрезанное")
     }
 
     // MARK: - Progress
@@ -305,5 +379,160 @@ struct DSLImporterTests {
     func slugFallback() {
         #expect(DSLImporter.slug(from: "", fallback: "my_dict.dsl") == "my-dict")
         #expect(DSLImporter.slug(from: "—", fallback: "vol_1.dsl") == "vol-1")
+    }
+}
+
+/// What an import is allowed to resume onto.
+///
+/// A job is only continuable if everything the output depends on is unchanged
+/// — every volume, and the syllable inventory the readings were split with.
+/// Half a dictionary from each of two versions is worse than either, and
+/// reports success.
+@Suite("DSL import identity")
+struct DSLImportIdentityTests {
+    /// Checking only the first volume lets a changed third volume resume onto
+    /// entries from the old one — a dictionary half from each version, and it
+    /// reports success.
+    @Test("A changed later volume starts the import again")
+    func changedLaterVolumeRestarts() throws {
+        let workspace = try Workspace()
+        try workspace.write("a.dsl", header + "#INCLUDE \"b.dsl\"\n\n" + cards(5))
+        try workspace.write("b.dsl", "#NAME \"B\"\n\n" + cards(5, from: 500))
+        try workspace.plantJob(
+            DictionaryWriter.Checkpoint(fileIndex: 1, byteOffset: 0, cardsRead: 5),
+            files: ["a.dsl", "b.dsl"],
+        )
+
+        // The first volume is untouched; only the second changes.
+        try workspace.write("b.dsl", "#NAME \"B\"\n\n" + cards(2, from: 500))
+        let again = try workspace.importer(from: "a.dsl").run()
+        #expect(!again.resumed)
+        #expect(again.cardsRead == 7)
+        #expect(again.entriesWritten == 7)
+    }
+
+    /// The syllable inventory decides how a reading is split and therefore
+    /// what the cross-dictionary merge key is, so changing it between runs
+    /// would leave readings parsed two ways in one container.
+    @Test("Changed syllable bases start the import again")
+    func changedBasesRestart() throws {
+        let workspace = try Workspace()
+        try workspace.write("a.dsl", header + cards(6))
+        try workspace.plantJob(
+            DictionaryWriter.Checkpoint(fileIndex: 0, byteOffset: 200, cardsRead: 2),
+            files: ["a.dsl"],
+            bases: ["ai"],
+        )
+
+        let again = try DSLImporter(
+            fileSet: DSLFileSet.discover(from: workspace.root.appendingPathComponent("a.dsl")),
+            destination: workspace.destination,
+            syllableBases: ["ai", "guo"],
+        ).run()
+        #expect(!again.resumed)
+        #expect(again.cardsRead == 6)
+    }
+
+    /// The same job with the same inputs *does* resume, so the checks above
+    /// are not passing because nothing ever resumes.
+    @Test("An unchanged source resumes")
+    func unchangedSourceResumes() throws {
+        let workspace = try Workspace()
+        try workspace.write("a.dsl", header + cards(6))
+        try workspace.plantJob(
+            DictionaryWriter.Checkpoint(fileIndex: 0, byteOffset: 0, cardsRead: 0),
+            files: ["a.dsl"],
+        )
+        #expect(try workspace.importer(from: "a.dsl").run().resumed)
+    }
+
+    /// A volume an `#INCLUDE` names but that is not there means a dictionary
+    /// missing part of itself, which is the failure a reader would never
+    /// notice on their own.
+    @Test("A missing volume is reported, not finished over")
+    func missingVolumeReported() throws {
+        let workspace = try Workspace()
+        try workspace.write("a.dsl", header + "#INCLUDE \"gone.dsl\"\n\n" + cards(4))
+
+        let summary = try workspace.importer(from: "a.dsl").run()
+        #expect(summary.entriesWritten == 4)
+        #expect(summary.diagnostics == 0)
+        #expect(summary.discovery.map(\.kind) == [.missingInclude("gone.dsl")])
+        #expect(summary.totalDiagnostics == 1)
+    }
+
+    /// A card counted on both sides of an interruption is counted twice, and
+    /// so are its diagnostics. Reader diagnostics have the opposite problem:
+    /// added only at end of file, a resume seeking past them loses them.
+    @Test("Diagnostic counts survive an interruption")
+    func diagnosticCountsSurviveResume() async throws {
+        // `[zzz]` is one lexer diagnostic per card; the dangling headword at
+        // the end is one from the reader.
+        let body = (0 ..< 20).map { "wz\($0)\n ài\n [m1][zzz]текст[/m]\n" }.joined()
+        let make = { (workspace: borrowing Workspace) throws in
+            _ = try workspace.write("a.dsl", header + body + "wdangling\n")
+        }
+
+        let reference = try Workspace()
+        try make(reference)
+        let expected = try reference.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(expected.diagnostics == 21)
+
+        let workspace = try Workspace()
+        try make(workspace)
+        let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
+        let (reports, continuation) = AsyncStream<Int>.makeStream()
+        let task = Task.detached {
+            defer { continuation.finish() }
+            return try importer.run { continuation.yield($0.cardsRead) }
+        }
+        var iterator = reports.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+        _ = try? await task.value
+
+        let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(resumed.resumed)
+        #expect(resumed.cardsRead == expected.cardsRead)
+        #expect(resumed.diagnostics == expected.diagnostics)
+    }
+
+    /// The other half: a reader diagnostic that happens *before* a checkpoint
+    /// has to be in that checkpoint. Added only at end of file, it is lost
+    /// whenever a resume seeks past the lines that caused it — and the
+    /// end-of-file catch-up hides the fault in any run that reaches the end,
+    /// which is why this case needs an interruption to show at all.
+    @Test("A diagnostic before the checkpoint is carried across a resume")
+    func readerDiagnosticsBeforeCheckpoint() async throws {
+        // An article line with no headword above it, before any card.
+        let make = { (workspace: borrowing Workspace) throws in
+            _ = try workspace.write("a.dsl", header + " [m1]сирота[/m]\n" + cards(20))
+        }
+
+        let reference = try Workspace()
+        try make(reference)
+        let expected = try reference.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(expected.diagnostics == 1)
+
+        let workspace = try Workspace()
+        try make(workspace)
+        let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
+        let (reports, continuation) = AsyncStream<Int>.makeStream()
+        let task = Task.detached {
+            defer { continuation.finish() }
+            return try importer.run { continuation.yield($0.cardsRead) }
+        }
+        var iterator = reports.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+        _ = try? await task.value
+
+        let partial = try DictionaryContainer(contentsOf: workspace.destination).entryCount()
+        let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
+        #expect(resumed.resumed)
+        #expect(
+            resumed.diagnostics == expected.diagnostics,
+            "resumed \(resumed.diagnostics), reference \(expected.diagnostics), partial \(partial)",
+        )
     }
 }

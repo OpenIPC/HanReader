@@ -95,16 +95,23 @@ public final class DictionaryWriter {
 
     /// What the job is reading, as identity rather than as a location.
     ///
-    /// Name, size and modification time rather than a path: on iOS the
-    /// container directory's UUID changes across installs and restores, so a
-    /// stored path is stale by the time it matters — the same mistake the
-    /// predecessor made with absolute audio paths. These three answer the only
-    /// question a resume has to ask: is this the same file I was part way
-    /// through?
+    /// A fingerprint rather than a path: on iOS the container directory's UUID
+    /// changes across installs and restores, so a stored path is stale by the
+    /// time it matters — the same mistake the predecessor made with absolute
+    /// audio paths.
+    ///
+    /// The fingerprint has to cover **everything that affects the output**,
+    /// which is more than the file the reader picked. Checking only the first
+    /// volume lets a changed third volume resume onto entries from the old
+    /// one; ignoring the syllable inventory lets a re-run with different
+    /// `--bases` mix readings parsed two ways. Either produces a dictionary
+    /// that is half one thing and half another, and reports success.
     public struct Source: Hashable, Sendable {
+        /// The first volume's name, for messages.
         public var name: String
-        public var size: Int
-        public var modified: Date
+        /// Identity of every input: all volumes, and whatever else the parse
+        /// depends on. Compared exactly.
+        public var fingerprint: String
         public var fileCount: Int
         /// Across the whole set, for progress.
         public var totalBytes: Int
@@ -112,15 +119,13 @@ public final class DictionaryWriter {
 
         public init(
             name: String,
-            size: Int,
-            modified: Date,
+            fingerprint: String,
             fileCount: Int,
             totalBytes: Int,
             parserVersion: Int,
         ) {
             self.name = name
-            self.size = size
-            self.modified = modified
+            self.fingerprint = fingerprint
             self.fileCount = fileCount
             self.totalBytes = totalBytes
             self.parserVersion = parserVersion
@@ -178,11 +183,8 @@ public final class DictionaryWriter {
             try Row.fetchOne(db, sql: "SELECT * FROM importJob WHERE id = 1")
         }
         let resume = stored.flatMap { row -> Checkpoint? in
-            guard row["sourceName"] as String == source.name,
-                  row["sourceSize"] as Int == source.size,
-                  row["parserVersion"] as Int == source.parserVersion,
-                  abs((row["sourceModified"] as Double) - source.modified.timeIntervalSince1970)
-                  < 1
+            guard row["sourceFingerprint"] as String == source.fingerprint,
+                  row["parserVersion"] as Int == source.parserVersion
             else { return nil }
             return Checkpoint(
                 fileIndex: row["fileIndex"],
@@ -322,10 +324,10 @@ public final class DictionaryWriter {
     private func writeJob(_ checkpoint: Checkpoint, to db: Database) throws {
         try db.execute(sql: """
             INSERT INTO importJob
-                (id, fileIndex, byteOffset, fileCount, sourceName, sourceSize,
-                 sourceModified, totalBytes, parserVersion, entriesWritten,
+                (id, fileIndex, byteOffset, fileCount, sourceName,
+                 sourceFingerprint, totalBytes, parserVersion, entriesWritten,
                  cardsRead, diagnostics, leadingHeadwords, updatedAt)
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 fileIndex = excluded.fileIndex,
                 byteOffset = excluded.byteOffset,
@@ -339,8 +341,7 @@ public final class DictionaryWriter {
             checkpoint.byteOffset,
             source.fileCount,
             source.name,
-            source.size,
-            source.modified.timeIntervalSince1970,
+            source.fingerprint,
             source.totalBytes,
             source.parserVersion,
             entriesWritten,
@@ -444,9 +445,14 @@ extension DictionaryWriter {
                 sql: "SELECT readingNumeric FROM entry WHERE readingNumeric <> ''",
             )
             while let numeric = try cursor.next() {
-                for syllable in Pinyin.parse(numeric: numeric) {
-                    if case let .syllable(syllable) = syllable {
-                        bases.insert(syllable.base)
+                for token in Pinyin.parse(numeric: numeric) {
+                    if case let .syllable(syllable) = token {
+                        // Lowercased, as `LexiconBuilder.syllableBases` does.
+                        // The syllabifier looks up lowercase candidates, so an
+                        // uppercase-only base stored here — `Bei` from a
+                        // capitalised reading — is one a later import using
+                        // this inventory could never match.
+                        bases.insert(syllable.base.lowercased())
                     }
                 }
             }
