@@ -20,7 +20,7 @@ enum DictionarySchema {
     /// Distinct from a parser version: no schema migration can repair data
     /// that was parsed wrongly, so a parser fix invalidates a container
     /// through `meta.parserVersion` and triggers a rebuild instead.
-    static let formatVersion = 2
+    static let formatVersion = 3
 
     static func migrator() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
@@ -41,6 +41,20 @@ enum DictionarySchema {
         migrator.registerMigration("v2_resumable_import") { db in
             try addSourceAnchors(db)
             try createImportJobTable(db)
+        }
+
+        // The denormalised first gloss, written since v1 and read by nothing.
+        // On a BKRS container it is **160 MB** — 3,442,623 rows of Cyrillic
+        // prose that is already inside the sense payload beside it. It was
+        // there so a result list could render without decoding a payload per
+        // row; with the compact codec that decode is microseconds for the ten
+        // rows a list shows, and 160 MB is not a reasonable price for it. If
+        // a list ever does need it, it can come back as a short prefix rather
+        // than a whole copy.
+        migrator.registerMigration("v3_drop_summary") { db in
+            try db.alter(table: "entry") { table in
+                table.drop(column: "summary")
+            }
         }
 
         return migrator
