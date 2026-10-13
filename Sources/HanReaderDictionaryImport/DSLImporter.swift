@@ -36,6 +36,12 @@ public struct DSLImportSummary: Hashable, Sendable {
     /// itself is the failure they would never notice.
     public let discovery: [DSLDiagnostic]
     public let resumed: Bool
+    /// False when the import stopped early because it was asked to.
+    ///
+    /// An unfinished container keeps its job row, so the next run picks up
+    /// where this one left off. It is not a dictionary yet, and nothing has
+    /// built its lookup indexes.
+    public let completed: Bool
     public let metadata: DictionaryMetadata
 
     /// Everything that went wrong, as one headline number.
@@ -108,14 +114,21 @@ public struct DSLImporter: Sendable {
 
     // MARK: - Running
 
-    /// Runs the import to completion, resuming an interrupted one.
+    /// Runs the import, resuming an interrupted one.
     ///
-    /// Throws `CancellationError` if the task is cancelled, having committed
-    /// everything up to the last batch — which is the same state a `kill -9`
-    /// leaves, and resumes the same way.
+    /// Two ways to stop it, for two different needs. `shouldContinue`
+    /// returning false stops at the next card boundary and returns a summary
+    /// with `completed == false`, which is what a Cancel button wants: the
+    /// work so far is committed, the job row stays, and nothing has thrown.
+    /// Cancelling the task instead throws `CancellationError`, for a caller
+    /// that is tearing down rather than pausing.
+    ///
+    /// Either way the container is left in the state a `kill -9` leaves —
+    /// everything up to the last committed batch — and resumes the same way.
     @discardableResult
     public func run(
         progress report: (@Sendable (DSLImportProgress) -> Void)? = nil,
+        shouldContinue: (@Sendable () -> Bool)? = nil,
     ) throws
         -> DSLImportSummary
     {
@@ -148,19 +161,37 @@ public struct DSLImporter: Sendable {
             builder: DSLCardBuilder(syllableBases: syllableBases),
             batchSize: batchSize,
             report: report,
+            shouldContinue: shouldContinue,
         )
         for index in run.state.checkpoint.fileIndex ..< sources.count {
             try run.importFile(at: index)
+            if run.stopped {
+                break
+            }
         }
 
+        return try summary(for: run, writer: writer, firstFile: first.name, resumed: resume != nil)
+    }
+
+    /// Finishes the container unless the run was asked to stop, and describes
+    /// what it produced either way.
+    private func summary(
+        for run: Run,
+        writer: DictionaryWriter,
+        firstFile: String,
+        resumed: Bool,
+    ) throws
+        -> DSLImportSummary
+    {
         let metadata = Self.metadata(
             for: fileSet,
             entryCount: writer.count,
-            fileName: first.name,
+            fileName: firstFile,
         )
-        try writer.finish(metadata: metadata)
-        report?(run.state.progress(written: writer.count, completed: true))
-
+        if !run.stopped {
+            try writer.finish(metadata: metadata)
+            run.report?(run.state.progress(written: writer.count, completed: true))
+        }
         return DSLImportSummary(
             cardsRead: run.state.checkpoint.cardsRead,
             entriesWritten: writer.count,
@@ -169,7 +200,8 @@ public struct DSLImporter: Sendable {
             // they are not something a resume re-reads. Reported here so a
             // dictionary missing a volume cannot look finished.
             discovery: fileSet.diagnostics,
-            resumed: resume != nil,
+            resumed: resumed,
+            completed: !run.stopped,
             metadata: metadata,
         )
     }
@@ -231,8 +263,12 @@ extension DSLImporter {
         let builder: DSLCardBuilder
         let batchSize: Int
         let report: (@Sendable (DSLImportProgress) -> Void)?
+        let shouldContinue: (@Sendable () -> Bool)?
 
         var state: Checkpointing
+        /// Set when `shouldContinue` said to stop, so `run` knows not to
+        /// finish the container.
+        var stopped = false
         var batch: [DictionaryWriter.SourcedEntry] = []
         var lastReport = Date.distantPast
 
@@ -243,6 +279,7 @@ extension DSLImporter {
             builder: DSLCardBuilder,
             batchSize: Int,
             report: (@Sendable (DSLImportProgress) -> Void)?,
+            shouldContinue: (@Sendable () -> Bool)? = nil,
         ) {
             self.sources = sources
             self.resume = resume
@@ -250,6 +287,7 @@ extension DSLImporter {
             self.builder = builder
             self.batchSize = batchSize
             self.report = report
+            self.shouldContinue = shouldContinue
             state = Checkpointing(
                 checkpoint: resume ?? DictionaryWriter.Checkpoint(),
                 sources: sources,
@@ -317,6 +355,10 @@ extension DSLImporter {
 
             while let record = try reader.next() {
                 try Task.checkCancellation()
+                if shouldContinue?() == false {
+                    stopped = true
+                    return
+                }
                 // The reader's own complaints are counted first, and they
                 // count as *settled*. They describe lines the reader has
                 // already gone past — an article with no headword above it

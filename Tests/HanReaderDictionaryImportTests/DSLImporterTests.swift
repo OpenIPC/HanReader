@@ -99,35 +99,40 @@ private let header = """
 
 """
 
-/// Runs an import and stops it at its first committed batch.
-///
-/// Deterministic, and it has to be. The progress callback signals the test
-/// and then *blocks*, so the cancellation is in place before the importer can
-/// take another step. Waiting for a progress value and then cancelling is not
-/// enough on its own: the importer carries on in the meantime, and on a quiet
-/// machine — or on CI — a twenty-card import finishes before an async test can
-/// react at all, leaving nothing interrupted and nothing to resume. Three
-/// tests here passed locally and failed on CI for exactly that reason.
-///
-/// Progress is reported on the first batch to commit, so afterwards exactly
-/// one batch is in the container and the rest of the file is not.
-@discardableResult
-private func interruptAtFirstBatch(_ importer: DSLImporter) async -> Bool {
-    let release = DispatchSemaphore(value: 0)
-    let (reached, continuation) = AsyncStream<Void>.makeStream()
-    let task = Task.detached {
-        defer { continuation.finish() }
-        return try importer.run { _ in
-            continuation.yield()
-            release.wait()
-        }
+/// A flag two closures can share.
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var isSet: Bool {
+        lock.withLock { value }
     }
-    var iterator = reached.makeAsyncIterator()
-    let interrupted = await iterator.next() != nil
-    task.cancel()
-    release.signal()
-    _ = try? await task.value
-    return interrupted
+
+    func set() {
+        lock.withLock { value = true }
+    }
+}
+
+/// Runs an import and stops it after its first committed batch.
+///
+/// Deterministic and synchronous: progress is reported when a batch commits,
+/// and `shouldContinue` is asked at the next card, so the importer stops with
+/// exactly one batch written and the rest of the file unread.
+///
+/// Two earlier attempts at this were wrong in instructive ways. Sleeping and
+/// then cancelling raced — a twenty-card import finishes before an async test
+/// can react. Signalling the test and blocking the callback until it cancelled
+/// was deterministic but **blocked a thread of the cooperative pool**, and
+/// with Swift Testing running these tests in parallel the pool deadlocked: CI
+/// sat in that suite for twenty minutes. Asking the importer to stop needs no
+/// concurrency at all.
+@discardableResult
+private func stopAfterFirstBatch(_ importer: DSLImporter) throws -> DSLImportSummary {
+    let committed = Flag()
+    return try importer.run(
+        progress: { _ in committed.set() },
+        shouldContinue: { !committed.isSet },
+    )
 }
 
 @Suite("DSL importer")
@@ -200,7 +205,7 @@ struct DSLImporterTests {
     /// exactly one batch however fast the machine is. A sleep raced: on a
     /// quiet machine the whole 400-card import finished inside 40 ms.
     @Test("An interrupted import resumes to the same result")
-    func resumeMatchesUninterrupted() async throws {
+    func resumeMatchesUninterrupted() throws {
         let reference = try Workspace()
         try reference.write("a.dsl", header + cards(400))
         let expected = try reference.importer(from: "a.dsl", batchSize: 25).run()
@@ -212,7 +217,8 @@ struct DSLImporterTests {
         // The first progress value means the first batch has committed, so
         // waiting for it and then cancelling interrupts the import at a batch
         // boundary with work done and work left — no sleep, no race.
-        await interruptAtFirstBatch(importer)
+        let partialRun = try stopAfterFirstBatch(importer)
+        #expect(!partialRun.completed)
 
         let partial = try DictionaryContainer(contentsOf: interrupted.destination).entryCount()
         #expect(partial > 0, "nothing was committed before the interruption")
@@ -280,7 +286,7 @@ struct DSLImporterTests {
     /// the dangling headword, so the first batch to commit is the seam card's,
     /// and the first progress report is therefore the one that follows it.
     @Test("A seam card survives being the frontier of a checkpoint")
-    func seamCardSurvivesResume() async throws {
+    func seamCardSurvivesResume() throws {
         let seamFiles = { (workspace: borrowing Workspace) throws in
             try workspace.write("a.dsl", header + "#INCLUDE \"b.dsl\"\n\nwseam\n")
             try workspace.write(
@@ -297,7 +303,8 @@ struct DSLImporterTests {
         let workspace = try Workspace()
         try seamFiles(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        await interruptAtFirstBatch(importer)
+        let partialRun = try stopAfterFirstBatch(importer)
+        #expect(!partialRun.completed)
 
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
         #expect(resumed.resumed)
@@ -480,7 +487,7 @@ struct DSLImportIdentityTests {
     /// so are its diagnostics. Reader diagnostics have the opposite problem:
     /// added only at end of file, a resume seeking past them loses them.
     @Test("Diagnostic counts survive an interruption")
-    func diagnosticCountsSurviveResume() async throws {
+    func diagnosticCountsSurviveResume() throws {
         // `[zzz]` is one lexer diagnostic per card; the dangling headword at
         // the end is one from the reader.
         let body = (0 ..< 20).map { "wz\($0)\n ài\n [m1][zzz]текст[/m]\n" }.joined()
@@ -496,7 +503,8 @@ struct DSLImportIdentityTests {
         let workspace = try Workspace()
         try make(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        await interruptAtFirstBatch(importer)
+        let partialRun = try stopAfterFirstBatch(importer)
+        #expect(!partialRun.completed)
 
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
         #expect(resumed.resumed)
@@ -510,7 +518,7 @@ struct DSLImportIdentityTests {
     /// end-of-file catch-up hides the fault in any run that reaches the end,
     /// which is why this case needs an interruption to show at all.
     @Test("A diagnostic before the checkpoint is carried across a resume")
-    func readerDiagnosticsBeforeCheckpoint() async throws {
+    func readerDiagnosticsBeforeCheckpoint() throws {
         // An article line with no headword above it, before any card.
         let make = { (workspace: borrowing Workspace) throws in
             _ = try workspace.write("a.dsl", header + " [m1]сирота[/m]\n" + cards(20))
@@ -524,7 +532,8 @@ struct DSLImportIdentityTests {
         let workspace = try Workspace()
         try make(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        await interruptAtFirstBatch(importer)
+        let partialRun = try stopAfterFirstBatch(importer)
+        #expect(!partialRun.completed)
 
         let partial = try DictionaryContainer(contentsOf: workspace.destination).entryCount()
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
