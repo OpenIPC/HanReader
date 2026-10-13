@@ -99,6 +99,37 @@ private let header = """
 
 """
 
+/// Runs an import and stops it at its first committed batch.
+///
+/// Deterministic, and it has to be. The progress callback signals the test
+/// and then *blocks*, so the cancellation is in place before the importer can
+/// take another step. Waiting for a progress value and then cancelling is not
+/// enough on its own: the importer carries on in the meantime, and on a quiet
+/// machine — or on CI — a twenty-card import finishes before an async test can
+/// react at all, leaving nothing interrupted and nothing to resume. Three
+/// tests here passed locally and failed on CI for exactly that reason.
+///
+/// Progress is reported on the first batch to commit, so afterwards exactly
+/// one batch is in the container and the rest of the file is not.
+@discardableResult
+private func interruptAtFirstBatch(_ importer: DSLImporter) async -> Bool {
+    let release = DispatchSemaphore(value: 0)
+    let (reached, continuation) = AsyncStream<Void>.makeStream()
+    let task = Task.detached {
+        defer { continuation.finish() }
+        return try importer.run { _ in
+            continuation.yield()
+            release.wait()
+        }
+    }
+    var iterator = reached.makeAsyncIterator()
+    let interrupted = await iterator.next() != nil
+    task.cancel()
+    release.signal()
+    _ = try? await task.value
+    return interrupted
+}
+
 @Suite("DSL importer")
 struct DSLImporterTests {
     // MARK: - A plain import
@@ -181,15 +212,7 @@ struct DSLImporterTests {
         // The first progress value means the first batch has committed, so
         // waiting for it and then cancelling interrupts the import at a batch
         // boundary with work done and work left — no sleep, no race.
-        let (reports, continuation) = AsyncStream<Int>.makeStream()
-        let task = Task.detached {
-            defer { continuation.finish() }
-            return try importer.run { continuation.yield($0.entriesWritten) }
-        }
-        var iterator = reports.makeAsyncIterator()
-        _ = await iterator.next()
-        task.cancel()
-        _ = try? await task.value
+        await interruptAtFirstBatch(importer)
 
         let partial = try DictionaryContainer(contentsOf: interrupted.destination).entryCount()
         #expect(partial > 0, "nothing was committed before the interruption")
@@ -274,15 +297,7 @@ struct DSLImporterTests {
         let workspace = try Workspace()
         try seamFiles(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        let (reports, continuation) = AsyncStream<Int>.makeStream()
-        let task = Task.detached {
-            defer { continuation.finish() }
-            return try importer.run { continuation.yield($0.entriesWritten) }
-        }
-        var iterator = reports.makeAsyncIterator()
-        _ = await iterator.next()
-        task.cancel()
-        _ = try? await task.value
+        await interruptAtFirstBatch(importer)
 
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
         #expect(resumed.resumed)
@@ -481,15 +496,7 @@ struct DSLImportIdentityTests {
         let workspace = try Workspace()
         try make(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        let (reports, continuation) = AsyncStream<Int>.makeStream()
-        let task = Task.detached {
-            defer { continuation.finish() }
-            return try importer.run { continuation.yield($0.cardsRead) }
-        }
-        var iterator = reports.makeAsyncIterator()
-        _ = await iterator.next()
-        task.cancel()
-        _ = try? await task.value
+        await interruptAtFirstBatch(importer)
 
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
         #expect(resumed.resumed)
@@ -517,15 +524,7 @@ struct DSLImportIdentityTests {
         let workspace = try Workspace()
         try make(workspace)
         let importer = try workspace.importer(from: "a.dsl", batchSize: 1)
-        let (reports, continuation) = AsyncStream<Int>.makeStream()
-        let task = Task.detached {
-            defer { continuation.finish() }
-            return try importer.run { continuation.yield($0.cardsRead) }
-        }
-        var iterator = reports.makeAsyncIterator()
-        _ = await iterator.next()
-        task.cancel()
-        _ = try? await task.value
+        await interruptAtFirstBatch(importer)
 
         let partial = try DictionaryContainer(contentsOf: workspace.destination).entryCount()
         let resumed = try workspace.importer(from: "a.dsl", batchSize: 1).run()
