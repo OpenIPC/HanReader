@@ -15,9 +15,16 @@ enum ReaderPhase: Equatable, Sendable {
 struct WordDetail: Equatable, Sendable {
     let word: String
     let reading: TokenReading?
-    let entries: [DictionaryEntry]
+    /// Every dictionary's answer, grouped by reading.
+    let groups: [ReadingGroup]
 
-    /// Whether the dictionary defines this word.
+    /// Flattened, for the places that want senses without caring which
+    /// dictionary or reading they belong to.
+    var entries: [DictionaryEntry] {
+        groups.flatMap { $0.entries.map(\.entry) }
+    }
+
+    /// Whether any dictionary defines this word.
     ///
     /// A word can have a reading and no entry — composed from its
     /// characters — which is why "not found" is a property of the result
@@ -25,7 +32,7 @@ struct WordDetail: Equatable, Sendable {
     /// reading on the floor: tapping a word the dictionary does not define
     /// removed the pinyin that was already visible above it.
     var isDefined: Bool {
-        !entries.isEmpty
+        groups.contains { !$0.entries.isEmpty }
     }
 }
 
@@ -265,7 +272,7 @@ final class ReaderModel {
         detailTask?.cancel()
         detail = .loading(word)
         detailTask = Task {
-            let entries = await services.dictionary.entries(for: word)
+            let groups = await services.dictionary.groups(for: word)
             // Both checks are needed. Cancellation covers the task being
             // torn down; the state check covers a result arriving for a word
             // that is no longer the one being asked about.
@@ -276,8 +283,11 @@ final class ReaderModel {
                 // entry is the one composed from its characters. Falling
                 // back to the entries covers a word tapped before its
                 // reading was fetched.
-                reading: readings[word] ?? ReadingComposer.reading(from: entries),
-                entries: entries,
+                reading: readings[word]
+                    ?? ReadingComposer.reading(
+                        from: groups.flatMap { $0.entries.map(\.entry) },
+                    ),
+                groups: groups,
             ))
         }
     }

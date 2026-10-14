@@ -212,6 +212,35 @@ struct CEDICTSenseTests {
         #expect(entry.summarySense?.gloss.text == "an actual meaning")
     }
 
+    /// Nor one that says nothing. A BKRS card opens with a division heading
+    /// whose whole text is a Roman numeral and a part of speech, both lifted
+    /// out of the gloss — so taken as the summary it renders as a blank line
+    /// while thirty-two senses sit behind it.
+    @Test("Summary skips a sense with nothing in it")
+    func summarySkipsEmptyGloss() {
+        let entry = DictionaryEntry(
+            headword: Headword(simplified: "爱", traditional: nil),
+            reading: Pinyin.parse(numeric: "ai4"),
+            senses: [
+                Sense(id: 0, kind: .definition, gloss: Gloss(text: ""), label: "I"),
+                Sense(id: 1, kind: .definition, gloss: Gloss(text: "любить"), level: 1),
+            ],
+        )
+        #expect(entry.summarySense?.gloss.text == "любить")
+    }
+
+    /// An entry whose senses are all empty still summarises as one of them,
+    /// rather than claiming the word is undefined.
+    @Test("Summary falls back to an empty sense rather than to nothing")
+    func summaryFallsBack() {
+        let entry = DictionaryEntry(
+            headword: Headword(simplified: "x", traditional: nil),
+            reading: [],
+            senses: [Sense(id: 0, kind: .definition, gloss: Gloss(text: ""), label: "I")],
+        )
+        #expect(entry.summarySense != nil)
+    }
+
     /// Senses are not split on `;`. Only about 2% of entries contain one, and
     /// splitting mangles text like `Down's syndrome; trisomy 21`.
     @Test("Semicolons do not split a sense")

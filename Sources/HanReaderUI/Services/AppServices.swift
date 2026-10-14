@@ -20,42 +20,95 @@ final class AppServices: Sendable {
     let dictionary: DictionaryService
     let segmenter: DocumentSegmenter
     let locations: AppDatabase.Locations
-    /// Nil when no dictionary could be opened, which is not fatal: the reader
-    /// still segments and still displays text, just with no annotations.
-    let dictionaryMetadata: DictionaryMetadata?
+    /// Every dictionary the reader has, in their order, with what each is
+    /// allowed to do and whether it opened.
+    ///
+    /// Empty is not fatal: the reader still segments and still displays text,
+    /// just with no annotations.
+    let catalogue: DictionaryCatalogue
+
+    /// The first gloss-providing dictionary, for the places that show one
+    /// dictionary's name — which is a stopgap until the acknowledgements
+    /// screen lists them all.
+    var dictionaryMetadata: DictionaryMetadata? {
+        catalogue.installed
+            .sorted { $0.sortOrder < $1.sortOrder }
+            .first { $0.providesGlosses }?
+            .metadata
+    }
+
+    /// Slug to display name, for labelling which dictionary an answer came
+    /// from. Attribution is a licence obligation for CC BY-SA data, so the
+    /// name has to be available wherever a gloss is shown.
+    var dictionaryNames: [String: String] {
+        catalogue.installed.reduce(into: [:]) { names, entry in
+            names[entry.slug] = entry.metadata.displayName
+        }
+    }
 
     private init(
         library: LibraryRepository,
         dictionary: DictionaryService,
         segmenter: DocumentSegmenter,
         locations: AppDatabase.Locations,
-        dictionaryMetadata: DictionaryMetadata?,
+        catalogue: DictionaryCatalogue,
     ) {
         self.library = library
         self.dictionary = dictionary
         self.segmenter = segmenter
         self.locations = locations
-        self.dictionaryMetadata = dictionaryMetadata
+        self.catalogue = catalogue
     }
 
-    /// Opens the real library and the bundled dictionary.
+    /// Opens the real library and every dictionary the reader has.
     ///
-    /// The dictionary is compiled at build time and shipped in the bundle, so
-    /// this is a file open rather than an import — around a millisecond
-    /// against the 2.6 seconds parsing the source text would take. That is
-    /// the whole reason `hanreader-dictgen` exists.
-    static func launch(bundle: Bundle = .main) throws -> AppServices {
+    /// The bundled one is compiled at build time and shipped in the app, so
+    /// that one is a file open rather than an import — around a millisecond
+    /// against the 2.6 seconds parsing its source would take, which is the
+    /// whole reason `hanreader-dictgen` exists. Anything else was imported by
+    /// the reader and is found by scanning, so there is no stored path to go
+    /// stale.
+    static func launch(bundle: Bundle = .main) async throws -> AppServices {
         let locations = try AppDatabase.Locations.standard()
         let library = try LibraryRepository(locations: locations)
-        let container = Self.openBundledDictionary(in: bundle)
-        let lookup: any DictionaryLookup = container ?? EmptyDictionary()
+        let catalogue = try await AppDatabase.catalogue(
+            in: locations.dictionaryDirectory,
+            bundled: bundle.url(
+                forResource: bundledDictionaryName,
+                withExtension: DictionaryCatalogue.fileExtension,
+            ),
+            library: library,
+        )
+        for failure in catalogue.unreadable {
+            Log.error("services", "\(failure.file.lastPathComponent): \(failure.reason)")
+        }
+
+        let (set, unopened) = catalogue.makeSet()
+        for failure in unopened {
+            Log.error("services", "\(failure.file.lastPathComponent): \(failure.reason)")
+        }
+        if set.isEmpty {
+            // Not fatal. Without a dictionary the reader still opens texts,
+            // segments them and displays them; it just cannot annotate or
+            // define anything. Refusing to launch would turn a degraded
+            // reader into no reader.
+            Log.error("services", "no dictionary could be opened")
+        }
 
         return AppServices(
             library: library,
-            dictionary: DictionaryService(lookup: lookup),
-            segmenter: Self.makeSegmenter(container: container),
+            dictionary: DictionaryService(lookup: set),
+            // The dictionary's own word list, so a word the segmenter finds
+            // is a word the reader can look up. That removes the prototype's
+            // silent mismatch, where the tokenizer produced a token no
+            // dictionary defined and the panel reported "not found" for what
+            // was really a segmentation error.
+            segmenter: DocumentSegmenter(
+                tokenizer: TextSegmenter.system(),
+                lexicon: catalogue.lexicon(),
+            ),
             locations: locations,
-            dictionaryMetadata: container.flatMap { try? $0.metadata() },
+            catalogue: catalogue,
         )
     }
 
@@ -84,50 +137,13 @@ final class AppServices: Sendable {
                 dictionaries: root.appendingPathComponent("dictionaries.sqlite"),
                 audio: root,
             ),
-            dictionaryMetadata: nil,
+            catalogue: DictionaryCatalogue(installed: []),
         )
     }
 
     // MARK: - Construction
 
-    private static func openBundledDictionary(in bundle: Bundle) -> DictionaryContainer? {
-        guard let url = bundle.url(
-            forResource: bundledDictionaryName,
-            withExtension: bundledDictionaryExtension,
-        ) else {
-            Log.error("services", "the bundled dictionary is missing from the app bundle")
-            return nil
-        }
-        do {
-            return try DictionaryContainer(contentsOf: url)
-        } catch {
-            // Not fatal. Without a dictionary the reader still opens texts,
-            // segments them character by character and displays them; it just
-            // cannot annotate or define anything. Refusing to launch would
-            // turn a degraded reader into no reader.
-            Log.error("services", "could not open the bundled dictionary: \(error)")
-            return nil
-        }
-    }
-
-    private static func makeSegmenter(container: DictionaryContainer?) -> DocumentSegmenter {
-        // The segmentation lexicon is the dictionary's own, so a word the
-        // segmenter finds is a word the reader can look up. That removes the
-        // prototype's silent mismatch, where the tokenizer produced a token
-        // no dictionary defined and the panel reported "not found" for what
-        // was really a segmentation error.
-        var lexemes: [Lexeme] = []
-        if let container {
-            lexemes = (try? container.lexicon()) ?? []
-        }
-        return DocumentSegmenter(
-            tokenizer: TextSegmenter.system(),
-            lexicon: Lexicon(lexemes),
-        )
-    }
-
     static let bundledDictionaryName = "cedict"
-    static let bundledDictionaryExtension = "hanreaderdict"
 }
 
 /// A dictionary that knows nothing.

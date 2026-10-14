@@ -452,8 +452,19 @@ public final class DictionaryWriter {
         // Folding the write-ahead log back in leaves one file rather than
         // three, which is what the reader copies around and what the size
         // reported to them should mean.
+        //
+        // Then out of write-ahead logging altogether, and that part is not
+        // cosmetic. A database whose header says WAL needs a shared-memory
+        // file, and a **read-only** connection cannot create one — so a
+        // finished container opened the way the app opens it failed with
+        // "unable to open database file", and the reader's imported
+        // dictionary simply did not appear. Write-ahead logging is an
+        // import-time choice, made for crash safety while the file is being
+        // built; a finished dictionary is read-only data and has no use for
+        // it.
         try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            try db.execute(sql: "PRAGMA journal_mode = DELETE")
         }
     }
 }

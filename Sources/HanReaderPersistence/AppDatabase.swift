@@ -47,6 +47,19 @@ public enum AppDatabase {
             self.audio = audio
         }
 
+        /// Where imported dictionary containers live.
+        ///
+        /// A directory rather than a list of paths, because scanning it is
+        /// what lets a container be found after the app's container UUID has
+        /// changed — which on iOS it does on every install and restore.
+        /// Derived from `dictionaries` rather than stored, so the two cannot
+        /// be configured inconsistently.
+        public var dictionaryDirectory: URL {
+            dictionaries
+                .deletingLastPathComponent()
+                .appendingPathComponent("dictionaries", isDirectory: true)
+        }
+
         /// The standard locations inside the application's support directory.
         ///
         /// Identical code on both platforms: `FileManager` already returns the
