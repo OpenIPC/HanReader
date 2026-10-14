@@ -149,6 +149,66 @@ struct DictionaryStorageTests {
             .contains("entry_on_source"))
     }
 
+    /// The way the app opens one: read-only, which is where this broke.
+    ///
+    /// A database whose header says WAL needs a shared-memory file, and a
+    /// read-only connection cannot create one — so an imported dictionary
+    /// opened the way the reader's app opens it failed with "unable to open
+    /// database file" and simply did not appear in their list. Nothing in the
+    /// writer's own tests caught it, because the writer opens for writing.
+    @Test("A finished container opens read-only")
+    func opensReadOnly() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let (writer, _) = try DictionaryWriter.open(at: url, source: source())
+        try writer.append(
+            [DictionaryWriter.SourcedEntry(entry: entry("爱"), sourceFile: 0, sourceOffset: 1)],
+            checkpoint: DictionaryWriter.Checkpoint(byteOffset: 1, cardsRead: 1),
+        )
+        try writer.finish(metadata: metadata(entryCount: 1))
+
+        // No write-ahead log beside it. (The shared-memory file lingers
+        // until the writer's own connection closes, which is why the test
+        // below copies the container instead of inspecting the directory:
+        // what matters is that a reader needs nothing but the one file.)
+        let siblings = try FileManager.default.contentsOfDirectory(
+            atPath: url.deletingLastPathComponent().path,
+        )
+        #expect(!siblings.contains { $0.hasSuffix("-wal") }, "left behind \(siblings)")
+
+        let container = try DictionaryContainer(contentsOf: url)
+        #expect(try container.metadata()?.slug == "test")
+        #expect(try container.entries(for: "爱").count == 1)
+    }
+
+    /// And the same file copied somewhere else, which is what installing a
+    /// dictionary is: a container that needed its sidecar files would open
+    /// where it was built and nowhere else.
+    @Test("A finished container opens after being moved")
+    func opensAfterMoving() throws {
+        let url = temporaryURL()
+        let moved = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: moved.deletingLastPathComponent())
+        }
+
+        let (writer, _) = try DictionaryWriter.open(at: url, source: source())
+        try writer.append(
+            [DictionaryWriter.SourcedEntry(entry: entry("爱"), sourceFile: 0, sourceOffset: 1)],
+            checkpoint: DictionaryWriter.Checkpoint(byteOffset: 1, cardsRead: 1),
+        )
+        try writer.finish(metadata: metadata(entryCount: 1))
+
+        try FileManager.default.createDirectory(
+            at: moved.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+        )
+        try FileManager.default.copyItem(at: url, to: moved)
+        #expect(try DictionaryContainer(contentsOf: moved).entries(for: "爱").count == 1)
+    }
+
     // MARK: - Sense payloads
 
     /// A container records which codec wrote it, so a new codec does not

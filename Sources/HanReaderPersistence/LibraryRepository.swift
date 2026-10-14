@@ -347,3 +347,86 @@ public enum LibraryError: Error, Sendable, Equatable, LocalizedError {
         }
     }
 }
+
+// MARK: - Dictionary preferences
+
+/// What the reader has decided about each dictionary.
+///
+/// In the library database rather than the dictionary one: `dictionaries` is
+/// derived data that can be deleted and rebuilt, while an ordering somebody
+/// dragged into place cannot, and it is the half that belongs in a backup.
+extension LibraryRepository {
+    /// What the reader has decided about each dictionary, by slug.
+    ///
+    /// A dictionary with no row is not disabled — it is one they have not had
+    /// an opinion about, and the catalogue gives it defaults from its own
+    /// gloss language against theirs.
+    public func dictionaryPreferences() async throws -> [String: DictionaryPreference] {
+        try await dbQueue.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT slug, providesGlosses, providesReadings, providesLexicon, sortOrder
+                FROM dictionaryPreference
+            """).reduce(into: [:]) { result, row in
+                result[row["slug"] as String] = DictionaryPreference(
+                    slug: row["slug"],
+                    providesGlosses: row["providesGlosses"],
+                    providesReadings: row["providesReadings"],
+                    providesLexicon: row["providesLexicon"],
+                    sortOrder: row["sortOrder"],
+                )
+            }
+        }
+    }
+
+    /// Records what the reader decided about one dictionary.
+    public func save(_ preference: DictionaryPreference) async throws {
+        try await dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO dictionaryPreference
+                    (slug, providesGlosses, providesReadings, providesLexicon, sortOrder)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET
+                    providesGlosses = excluded.providesGlosses,
+                    providesReadings = excluded.providesReadings,
+                    providesLexicon = excluded.providesLexicon,
+                    sortOrder = excluded.sortOrder
+            """, arguments: [
+                preference.slug,
+                preference.providesGlosses,
+                preference.providesReadings,
+                preference.providesLexicon,
+                preference.sortOrder,
+            ])
+        }
+    }
+
+    /// Writes an order the reader dragged into place.
+    ///
+    /// Written for every slug in one transaction, so a list that was
+    /// reordered is never half reordered — the state a reader would see as
+    /// two dictionaries swapping places at random.
+    public func setDictionaryOrder(_ slugs: [String]) async throws {
+        try await dbQueue.write { db in
+            for (position, slug) in slugs.enumerated() {
+                try db.execute(sql: """
+                    INSERT INTO dictionaryPreference (slug, sortOrder) VALUES (?, ?)
+                    ON CONFLICT(slug) DO UPDATE SET sortOrder = excluded.sortOrder
+                """, arguments: [slug, position])
+            }
+        }
+    }
+
+    /// Forgets what the reader decided about a dictionary they removed.
+    ///
+    /// Separate from deleting the file, because the two can disagree: a
+    /// reader who deletes a container and re-imports it should get their
+    /// ordering back, so this is called only when they remove it on purpose.
+    public func forgetDictionary(_ slug: String) async throws {
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "DELETE FROM dictionaryPreference WHERE slug = ?",
+                arguments: [slug],
+            )
+        }
+    }
+}

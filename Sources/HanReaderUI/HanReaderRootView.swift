@@ -26,6 +26,9 @@ public final class HanReaderLaunch {
     /// detail of this module.
     enum State {
         case loading
+        /// Claimed by the first window to call `start`, so a second one does
+        /// not open the library again while the first is still awaiting.
+        case opening
         case ready(AppServices, Settings, SpeechModel)
         case failed(String)
     }
@@ -36,10 +39,18 @@ public final class HanReaderLaunch {
 
     /// Opens the databases. Safe to call repeatedly; only the first does
     /// anything, because every window's root view calls it on appear.
-    func start() {
+    ///
+    /// Asynchronous now that the dictionaries are a catalogue rather than one
+    /// bundled file: it scans a directory and reads each container's own
+    /// metadata, which is work that should not run on the main actor even
+    /// though it is only a few milliseconds.
+    func start() async {
         guard case .loading = state else { return }
+        // Claimed before awaiting, or two windows appearing together both see
+        // `.loading` and both open the library.
+        state = .opening
         do {
-            state = try .ready(AppServices.launch(), Settings(), SpeechModel())
+            state = try await .ready(AppServices.launch(), Settings(), SpeechModel())
         } catch {
             // Only a failure to open the *library* reaches here. A missing
             // or unreadable dictionary is handled inside `AppServices` and
@@ -62,11 +73,11 @@ public struct HanReaderRootView: View {
 
     public var body: some View {
         switch launch.state {
-        case .loading:
-            // Opening a prepared dictionary container takes about a
-            // millisecond, so there is nothing worth showing a spinner for.
+        case .loading, .opening:
+            // Opening prepared dictionary containers takes a few
+            // milliseconds, so there is nothing worth showing a spinner for.
             Color.clear
-                .task { launch.start() }
+                .task { await launch.start() }
         case let .failed(message):
             ContentUnavailableView(
                 "HanReader could not start",

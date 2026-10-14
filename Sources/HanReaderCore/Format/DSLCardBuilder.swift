@@ -107,14 +107,79 @@ public struct DSLCardBuilder: Sendable {
     /// `_` is not a reading. Returning `[""]` for it — which a naive split
     /// does — produces an entry claiming to know a pronunciation that is the
     /// empty string, and 77% of this dictionary is that case.
+    ///
+    /// Three things the line can do that a split on `,` does not survive,
+    /// each measured over the 784,004 cards that have a reading at all:
+    ///
+    /// - **1,750 lines separate readings with `;`** rather than a comma.
+    /// - **287 carry markup**, a register note sitting between two readings:
+    ///   `zhǔ; [i]в сочет. также[/i] zhù`. Lexing it away leaves the note
+    ///   behind as text.
+    /// - and some of those have **no separator at all** —
+    ///   `nāi [i]гуанчжоуск. диал. также[/i] lāi` — so splitting cannot find
+    ///   the second reading however many separators it knows.
+    ///
+    /// So a reading is a maximal run of Latin-alphabet words. That takes
+    /// `nāi … lāi` as two readings and leaves the Russian between them out,
+    /// and it needs no list of the abbreviations this dictionary uses. It
+    /// recovers 4,114 readings from those 1,825 awkward lines where splitting
+    /// on separators alone recovers 3,810 and shows `в сочет. также zhù`
+    /// above a word for the rest.
     static func readings(in pinyin: String) -> [String] {
-        let trimmed = pinyin.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed != "_" else { return [] }
-        return trimmed
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && $0 != "_" }
+        let text = DSLLexer.tokens(in: pinyin).tokens.reduce(into: "") { result, token in
+            if case let .text(text) = token {
+                result += text
+            }
+        }
+
+        var readings: [String] = []
+        // Two levels, and they are not the same thing. A comma or semicolon
+        // separates readings; a space inside one joins its syllables, as in
+        // `yībānxìng tǎolùn`.
+        for candidate in text.split(whereSeparator: { $0 == "," || $0 == ";" }) {
+            var run: [Substring] = []
+            func endRun() {
+                guard !run.isEmpty else { return }
+                readings.append(run.joined(separator: " "))
+                run = []
+            }
+            for word in candidate.split(separator: " ") {
+                if isLatinScript(word) {
+                    run.append(word)
+                } else {
+                    endRun()
+                }
+            }
+            endRun()
+        }
+        return readings
     }
+
+    /// Whether a word is written in the alphabet pinyin is written in.
+    ///
+    /// `_` has no letters at all and so is not a reading either, which is how
+    /// the 77% of cards that carry no reading come out as none rather than as
+    /// one empty one.
+    static func isLatinScript(_ word: Substring) -> Bool {
+        var sawLetter = false
+        for scalar in word.unicodeScalars where scalar.properties.isAlphabetic {
+            sawLetter = true
+            guard latinRanges.contains(where: { $0.contains(scalar.value) }) else {
+                return false
+            }
+        }
+        return sawLetter
+    }
+
+    /// The blocks pinyin is written in: ASCII, Latin-1 Supplement and Latin
+    /// Extended-A/B for `ǎ`, `ǔ` and `ǖ`, and Latin Extended Additional for
+    /// the `ḿ` that CC-CEDICT spells `m2`.
+    private static let latinRanges: [ClosedRange<UInt32>] = [
+        0x41 ... 0x5A,
+        0x61 ... 0x7A,
+        0xC0 ... 0x24F,
+        0x1E00 ... 0x1EFF,
+    ]
 
     /// Converts one diacritic reading into tokens.
     ///

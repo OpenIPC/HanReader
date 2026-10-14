@@ -13,14 +13,18 @@ struct WordDetailContent: View {
     let detail: WordDetail
     let style: ReaderStyle
     let onSpeak: (String) -> Void
+    /// Slug to display name, so an answer can say which dictionary it came
+    /// from. Attribution is a licence obligation for CC BY-SA data, not a
+    /// nicety, and it has to reach the reader where they read the gloss.
+    var dictionaryNames: [String: String] = [:]
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 if detail.isDefined {
-                    ForEach(Array(detail.entries.enumerated()), id: \.offset) { _, entry in
-                        entryView(entry)
+                    ForEach(Array(detail.groups.enumerated()), id: \.offset) { _, group in
+                        groupView(group)
                     }
                 } else {
                     Text("No entry in the dictionary for this word.")
@@ -66,33 +70,86 @@ struct WordDetailContent: View {
         }
     }
 
-    private func entryView(_ entry: DictionaryEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    /// One reading, with every dictionary's answer for it.
+    ///
+    /// The reading heads the group rather than repeating on each answer:
+    /// 了's two dictionaries both say `le`, and printing it twice implies
+    /// they are two readings.
+    private func groupView(_ group: ReadingGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(verbatim: entry.readingDisplay)
+                Text(verbatim: group.readingDisplay)
                     .font(.headline)
-                if entry.headword.scriptsDiffer {
-                    // Shown only when the two forms actually differ, which
-                    // is true for 63% of CC-CEDICT. Printing the same
-                    // characters twice for the rest would be noise.
-                    Text(verbatim: entry.headword.traditionalOrSimplified)
+                if let traditional = Self.traditional(in: group) {
+                    // Shown only when the two forms actually differ, which is
+                    // true for 63% of CC-CEDICT. Printing the same characters
+                    // twice for the rest would be noise.
+                    Text(verbatim: traditional)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .accessibilityLabel(Text("Traditional form"))
                 }
             }
-            ForEach(entry.senses) { sense in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(verbatim: "\(sense.id + 1).")
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                    Text(verbatim: sense.gloss.text)
-                        .font(.callout)
+            ForEach(Array(group.entries.enumerated()), id: \.offset) { _, attributed in
+                answerView(attributed)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func answerView(_ attributed: AttributedEntry) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let name = dictionaryNames[attributed.dictionary] {
+                Text(verbatim: name)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(Text("From \(name)"))
+            }
+            ForEach(attributed.entry.senses) { sense in
+                senseView(sense)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// One sense, indented by how deeply the dictionary nested it.
+    ///
+    /// The indent is the whole reason `Sense` carries a level: BKRS writes
+    /// Roman-numeral divisions with numbered senses beneath them and examples
+    /// beneath those, and flattening that is what made the predecessor's
+    /// definitions unreadable.
+    private func senseView(_ sense: Sense) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: sense.label ?? "\(sense.id + 1).")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 2) {
+                if !sense.partOfSpeech.isEmpty || !sense.registers.isEmpty {
+                    Text(verbatim: (sense.partOfSpeech + sense.registers)
+                        .joined(separator: " "))
+                        .font(.caption.italic())
+                        .foregroundStyle(.secondary)
+                }
+                Text(verbatim: sense.gloss.text)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                ForEach(Array(sense.examples.enumerated()), id: \.offset) { _, example in
+                    Text(verbatim: example.raw)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, Double(sense.level) * 14)
+    }
+
+    /// The traditional spelling, if any dictionary in the group gives one
+    /// that differs.
+    private static func traditional(in group: ReadingGroup) -> String? {
+        group.entries
+            .first { $0.entry.headword.scriptsDiffer }?
+            .entry.headword.traditionalOrSimplified
     }
 
     /// Optional rather than an empty string: a reading the dictionary

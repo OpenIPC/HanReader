@@ -141,6 +141,38 @@ struct DSLCardBuilderTests {
         #expect(result.entries.allSatisfy { $0.senses.count == 1 })
     }
 
+    /// 1,750 reading lines separate their readings with a semicolon rather
+    /// than a comma.
+    @Test("A semicolon separates readings too")
+    func semicolonSeparatesReadings() {
+        let result = build(headword: "獭", pinyin: "chán; tán; dàn", "[m1]текст[/m]")
+        #expect(result.entries.map(\.readingDisplay) == ["chán", "tán", "dàn"])
+    }
+
+    /// 287 reading lines carry a register note between two readings. Lexed,
+    /// the markup goes but the Russian stays, and without a script test
+    /// `в сочет. также zhù` ends up above the word on the page — which is
+    /// exactly what the app showed when BKRS first fed the ruby.
+    @Test("A register note between two readings is not a reading", arguments: [
+        ("zhǔ; [i]в сочет. также[/i] zhù", ["zhǔ", "zhù"]),
+        ("lùzhóu,[c][i] разг.[/c] [c][/i][/c]liùzhóu", ["lùzhóu", "liùzhóu"]),
+        // No separator at all, so splitting alone could never find the
+        // second reading however many separators it knew.
+        ("nāi [c][i]гуанчжоуск. диал. также[/c] [c][/i][/c]lāi", ["nāi", "lāi"]),
+    ])
+    func registerNotesAreNotReadings(line: String, expected: [String]) {
+        #expect(DSLCardBuilder.readings(in: line) == expected)
+    }
+
+    /// A space inside one reading joins its syllables; a comma between two
+    /// separates them. Conflating the two made `le, liǎo` a single reading
+    /// called `le liǎo`.
+    @Test("A space inside a reading is not a separator")
+    func spacesJoinSyllables() {
+        #expect(DSLCardBuilder.readings(in: "yībānxìng tǎolùn") == ["yībānxìng tǎolùn"])
+        #expect(DSLCardBuilder.readings(in: "le, liǎo") == ["le", "liǎo"])
+    }
+
     @Test("A reading that cannot be split still displays")
     func unsplittableReading() {
         let result = build(pinyin: "zzzqqq", "[m1]текст[/m]")

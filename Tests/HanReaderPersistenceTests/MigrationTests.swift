@@ -32,6 +32,8 @@ struct MigrationTests {
         #expect(schema == [
             "appState(key,value)",
             "audioTrack(textId,relativePath,duration,importedAt)",
+            "dictionaryPreference(slug,providesGlosses,providesReadings,"
+                + "providesLexicon,sortOrder)",
             "readingPosition(textId,blockIndex,tokenIndex,characterOffset,audioTime,updatedAt)",
             "revealedWord(textId,word,revealedAt)",
             "text(id,title,content,contentHash,characterCount,preview,"
@@ -47,7 +49,7 @@ struct MigrationTests {
             try migrator.hasCompletedMigrations(db)
         }
         #expect(completed)
-        #expect(migrator.migrations == ["v1_initial"])
+        #expect(migrator.migrations == ["v1_initial", "v2_dictionary_preferences"])
     }
 
     /// Running the migrator again must be a no-op. Every launch does this.
@@ -62,7 +64,7 @@ struct MigrationTests {
                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'grdb_%'
             """)
         }
-        #expect(tables == 5)
+        #expect(tables == 6)
     }
 
     /// The case an empty-database test cannot reach: a migration that works

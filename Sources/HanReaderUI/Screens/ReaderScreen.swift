@@ -155,6 +155,7 @@ struct ReaderScreen: View {
                     detail: detail,
                     style: style,
                     onSpeak: { speech.speak($0, suppressed: voiceOverEnabled) },
+                    dictionaryNames: services.dictionaryNames,
                 )
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
             } else {

@@ -25,6 +25,13 @@ import HanReaderCore
 ///   a screenful is one actor hop rather than four hundred.
 actor DictionaryService {
     private let lookup: any DictionaryLookup
+    /// The dictionaries a definition may come from, in the reader's order.
+    ///
+    /// Separate from `lookup`, which is the *reading* path: a reader can turn
+    /// off CC-CEDICT's English definitions and still need its readings, since
+    /// 77% of BKRS entries carry none. Nil when the service was built from a
+    /// single lookup, as the tests and previews do.
+    private let set: DictionarySet?
     private var readingCache: BoundedCache<String, TokenReading?>
     private var entryCache: BoundedCache<String, [DictionaryEntry]>
 
@@ -47,8 +54,41 @@ actor DictionaryService {
     ///     annotated and tapping it does not query again.
     init(lookup: some DictionaryLookup, capacity: Int = 4096, entryCapacity: Int = 1024) {
         self.lookup = lookup
+        set = lookup as? DictionarySet
         readingCache = BoundedCache(capacity: capacity)
         entryCache = BoundedCache(capacity: entryCapacity)
+    }
+
+    /// Every gloss-providing dictionary's answer for a word, grouped by
+    /// reading and labelled with where it came from.
+    ///
+    /// Grouped because 了 is `le` in one dictionary and `liǎo` in another,
+    /// and a reader tapping it should see two readings with two answers each
+    /// rather than four entries with no indication which are the same word.
+    /// Labelled because CC-CEDICT is CC BY-SA and attribution has to reach
+    /// the reader at the point they read the gloss.
+    func groups(for word: String) -> [ReadingGroup] {
+        guard let set else {
+            // Built from a single lookup, so there is nothing to attribute
+            // and nothing to merge; one unnamed group keeps the caller's
+            // shape the same either way.
+            let entries = entries(for: word)
+            guard !entries.isEmpty else { return [] }
+            return Dictionary(grouping: entries, by: \.readingKey)
+                .sorted { $0.key < $1.key }
+                .map { key, entries in
+                    ReadingGroup(
+                        readingKey: key,
+                        entries: entries.map { AttributedEntry(dictionary: "", entry: $0) },
+                    )
+                }
+        }
+        let result = set.groups(for: word)
+        for slug in result.failures where !hasReportedFailure {
+            hasReportedFailure = true
+            Log.error("dictionary", "\(slug) could not be read")
+        }
+        return result.groups
     }
 
     // MARK: - Readings

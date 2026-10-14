@@ -307,6 +307,14 @@ public struct DictionaryEntry: Hashable, Sendable {
     /// first of any kind. Used for one-line summaries, where "variant of 妳"
     /// is close to useless.
     public var summarySense: Sense? {
-        senses.first { $0.kind == .definition } ?? senses.first
+        // Nor one that says nothing. A BKRS card opens with a division
+        // heading — `[m1][b]I[/b] [p]гл.[/p][/m]` — whose whole text is the
+        // Roman numeral and the part of speech, both of which are lifted out
+        // of the gloss. Taken as the summary it renders as an empty line, so
+        // 爱's one-line answer would be blank while 32 senses sat behind it.
+        senses.first { $0.kind == .definition && !$0.gloss.text.isEmpty }
+            ?? senses.first { !$0.gloss.text.isEmpty }
+            ?? senses.first { $0.kind == .definition }
+            ?? senses.first
     }
 }

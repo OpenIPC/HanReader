@@ -34,7 +34,53 @@ enum LibrarySchema {
             try createAppStateTable(db)
         }
 
+        migrator.registerMigration("v2_dictionary_preferences") { db in
+            try createDictionaryPreferenceTable(db)
+        }
+
         return migrator
+    }
+
+    // MARK: - v2: what the reader has decided about each dictionary
+
+    /// The reader's choices about an installed dictionary, and nothing else.
+    ///
+    /// **In the library database, not the dictionary one.** `dictionaries` is
+    /// derived data that can be deleted and rebuilt; an ordering someone
+    /// dragged into place cannot. It is also the half that belongs in a
+    /// backup.
+    ///
+    /// **No path, and no copy of the dictionary's own metadata.** A container
+    /// is found by scanning the dictionaries directory, so there is no stored
+    /// path to go stale — which on iOS it would, since the container
+    /// directory's UUID changes across installs and restores. And its name,
+    /// licence and attribution are read from the container's own `meta` every
+    /// time, so the Acknowledgements screen cannot show a licence the file
+    /// contradicts. A row here is the reader's opinion; the file is the fact.
+    ///
+    /// A dictionary with no row is not disabled — it is one the reader has
+    /// not had an opinion about yet, and gets sensible defaults from its own
+    /// gloss language against theirs.
+    private static func createDictionaryPreferenceTable(_ db: Database) throws {
+        try db.create(table: "dictionaryPreference") { table in
+            table.column("slug", .text).notNull().primaryKey()
+
+            // Three permissions rather than one switch. A reader can turn off
+            // CC-CEDICT's English glosses and still need it: 77% of BKRS
+            // entries carry no reading, so its single-character headwords are
+            // what put pinyin on the page in both language modes.
+            table.column("providesGlosses", .boolean).notNull().defaults(to: true)
+            table.column("providesReadings", .boolean).notNull().defaults(to: true)
+            // Whether its headwords feed the segmenter. Off by default for a
+            // dictionary whose headwords are not words: BKRS contributes
+            // 1,806,893 lexemes, which is both a quarter of a gigabyte in
+            // memory and a word list in which almost every run of Han
+            // characters is a word — the condition under which
+            // maximum-matching produces confident nonsense.
+            table.column("providesLexicon", .boolean).notNull().defaults(to: false)
+
+            table.column("sortOrder", .integer).notNull()
+        }
     }
 
     // MARK: - v1 tables
