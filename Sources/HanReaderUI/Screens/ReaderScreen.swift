@@ -16,6 +16,10 @@ struct ReaderScreen: View {
     let settings: Settings
     let speech: SpeechModel
 
+    /// Changes when the dictionaries do, so the model — which caches
+    /// readings and definitions — is rebuilt against the new ones.
+    let dictionaryGeneration: Int
+
     @State private var model: ReaderModel?
     @State private var isInspectorPresented = false
 
@@ -41,7 +45,7 @@ struct ReaderScreen: View {
 
     var body: some View {
         content
-            .task(id: textID) {
+            .task(id: Reading(text: textID, dictionaries: dictionaryGeneration)) {
                 // The previous model is closed before the next is built.
                 // `.task(id:)` cancels its own task when the id changes, but
                 // the unstructured work the model holds -- the debounced
@@ -221,4 +225,15 @@ private struct DetailPanelPlacement<Panel: View>: ViewModifier {
             content.safeAreaInset(edge: .top, spacing: 0, content: panel)
         }
     }
+}
+
+/// What a reader view is showing: a text, read with a particular set of
+/// dictionaries.
+///
+/// Both halves are identity. Keying only on the text meant an imported
+/// dictionary did not reach a text that was already open, because the model
+/// holding the caches was never rebuilt.
+private struct Reading: Equatable {
+    let text: TextID
+    let dictionaries: Int
 }

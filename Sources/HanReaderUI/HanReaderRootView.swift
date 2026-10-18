@@ -35,6 +35,15 @@ public final class HanReaderLaunch {
 
     private(set) var state: State = .loading
 
+    /// Bumped whenever the dictionaries change.
+    ///
+    /// An open text holds a model built against the services it was opened
+    /// with, and that model caches readings and definitions. Including this
+    /// in the identity of that model is what makes an imported dictionary
+    /// appear in a text the reader already has open, rather than at their
+    /// next launch.
+    private(set) var dictionaryGeneration = 0
+
     public init() {}
 
     /// Opens the databases. Safe to call repeatedly; only the first does
@@ -58,6 +67,23 @@ public final class HanReaderLaunch {
             // launch would turn a degraded reader into no reader.
             Log.error("launch", "could not open the library: \(error)")
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Reads the dictionaries again, after one was imported, removed or
+    /// reordered.
+    ///
+    /// A failure here leaves the reader with the dictionaries they had, which
+    /// is the right degradation: the change did not take, and saying so beats
+    /// replacing a working set with none.
+    func reloadDictionaries() async {
+        guard case let .ready(services, settings, speech) = state else { return }
+        do {
+            let reloaded = try await services.reloadingDictionaries()
+            state = .ready(reloaded, settings, speech)
+            dictionaryGeneration += 1
+        } catch {
+            Log.error("launch", "could not reload the dictionaries: \(error)")
         }
     }
 }
@@ -90,6 +116,7 @@ public struct HanReaderRootView: View {
                 settings: settings,
                 speech: speech,
                 selection: $selection,
+                launch: launch,
             )
         }
     }
@@ -101,7 +128,9 @@ private struct LibraryAndReader: View {
     let settings: Settings
     let speech: SpeechModel
     @Binding var selection: TextID?
+    let launch: HanReaderLaunch
 
+    @State private var isDictionariesPresented = false
     @State private var library: LibraryModel
     @State private var importer: TextImporter
     @State private var isFileImporterPresented = false
@@ -130,10 +159,12 @@ private struct LibraryAndReader: View {
         settings: Settings,
         speech: SpeechModel,
         selection: Binding<TextID?>,
+        launch: HanReaderLaunch,
     ) {
         self.services = services
         self.settings = settings
         self.speech = speech
+        self.launch = launch
         _selection = selection
         let library = LibraryModel(services: services)
         _library = State(initialValue: library)
@@ -146,6 +177,7 @@ private struct LibraryAndReader: View {
                 model: library,
                 selection: $selection,
                 onImport: { isFileImporterPresented = true },
+                onShowDictionaries: { isDictionariesPresented = true },
             )
             .navigationSplitViewColumnWidth(
                 min: 200,
@@ -159,6 +191,10 @@ private struct LibraryAndReader: View {
                     services: services,
                     settings: settings,
                     speech: speech,
+                    // Part of the reader's identity, so an imported
+                    // dictionary reaches a text that is already open rather
+                    // than waiting for the next launch.
+                    dictionaryGeneration: launch.dictionaryGeneration,
                 )
             } else {
                 ContentUnavailableView(
@@ -192,6 +228,11 @@ private struct LibraryAndReader: View {
                 Task { await importer.open(url) }
             case let .failure(error):
                 importer.error = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $isDictionariesPresented) {
+            DictionariesScreen(services: services) {
+                await launch.reloadDictionaries()
             }
         }
         .sheet(isPresented: Binding(

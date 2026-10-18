@@ -80,10 +80,19 @@ public struct UnreadableDictionary: Hashable, Sendable {
 public struct DictionaryCatalogue: Sendable {
     public let installed: [InstalledDictionary]
     public let unreadable: [UnreadableDictionary]
+    /// Imports that stopped part way, which the file says of itself by still
+    /// carrying its job row. Not failures: importing the same source again
+    /// carries on from where it stopped.
+    public let unfinished: [URL]
 
-    public init(installed: [InstalledDictionary], unreadable: [UnreadableDictionary] = []) {
+    public init(
+        installed: [InstalledDictionary],
+        unreadable: [UnreadableDictionary] = [],
+        unfinished: [URL] = [],
+    ) {
         self.installed = installed
         self.unreadable = unreadable
+        self.unfinished = unfinished
     }
 
     /// The extension a compiled dictionary has.
@@ -122,6 +131,24 @@ extension DictionaryCatalogue {
             }
         }
         return (DictionarySet(members: members), failures)
+    }
+
+    /// The toneless syllables the installed dictionaries use.
+    ///
+    /// Needed when importing a new one: a DSL dictionary writes its readings
+    /// as diacritics, and splitting `tǔ'ěrqísītǎn` into syllables is what
+    /// makes it comparable with CC-CEDICT's numeric form. Without them a
+    /// reading still displays exactly as written and only the
+    /// cross-dictionary merge key is lost, so this degrades rather than
+    /// fails.
+    public func syllableBases() -> Set<String> {
+        var bases: Set<String> = []
+        for entry in installed where entry.providesReadings {
+            bases.formUnion(
+                (try? DictionaryContainer(contentsOf: entry.file).syllableBases()) ?? [],
+            )
+        }
+        return bases
     }
 
     /// The segmentation word list, from the dictionaries allowed to supply
@@ -179,17 +206,60 @@ extension AppDatabase {
             .map { ($0, false) }
 
         let preferences = try await library.dictionaryPreferences()
+        var catalogue = Accumulator()
+        for (url, isBuiltIn) in files {
+            catalogue.add(
+                url,
+                isBuiltIn: isBuiltIn,
+                preferences: preferences,
+                preferredLanguages: preferredLanguages,
+            )
+        }
+        return catalogue.result
+    }
+
+    /// Builds a catalogue one file at a time.
+    ///
+    /// Three outcomes per file, and keeping them apart is the point: a
+    /// dictionary, an import that stopped part way, and a file that is not
+    /// either. Only the last is a failure.
+    private struct Accumulator {
         var installed: [InstalledDictionary] = []
         var unreadable: [UnreadableDictionary] = []
+        var unfinished: [URL] = []
 
-        for (url, isBuiltIn) in files {
+        var result: DictionaryCatalogue {
+            DictionaryCatalogue(
+                installed: installed,
+                unreadable: unreadable,
+                unfinished: unfinished,
+            )
+        }
+
+        mutating func add(
+            _ url: URL,
+            isBuiltIn: Bool,
+            preferences: [String: DictionaryPreference],
+            preferredLanguages: [String],
+        ) {
             do {
-                guard let metadata = try DictionaryContainer(contentsOf: url).metadata() else {
-                    unreadable.append(UnreadableDictionary(
-                        file: url,
-                        reason: "the file has no dictionary metadata",
-                    ))
-                    continue
+                let container = try DictionaryContainer(contentsOf: url)
+                guard let metadata = try container.metadata() else {
+                    // A container writes its metadata when the import
+                    // finishes, so one without any is either an import that
+                    // stopped — which it says by still carrying its job row
+                    // — or a file that is not a dictionary at all. The
+                    // difference matters: one of them is fixed by importing
+                    // it again, and the other never will be.
+                    if (try? container.hasUnfinishedImport()) == true {
+                        unfinished.append(url)
+                    } else {
+                        unreadable.append(UnreadableDictionary(
+                            file: url,
+                            reason: "the file has no dictionary metadata",
+                        ))
+                    }
+                    return
                 }
                 let stored = preferences[metadata.slug]
                 installed.append(InstalledDictionary(
@@ -204,7 +274,7 @@ extension AppDatabase {
                     // word-level, and it is the lexicon the reader has until
                     // they say otherwise.
                     providesLexicon: stored?.providesLexicon ?? isBuiltIn,
-                    sortOrder: stored?.sortOrder ?? defaultOrder(
+                    sortOrder: stored?.sortOrder ?? AppDatabase.defaultOrder(
                         for: metadata,
                         preferredLanguages: preferredLanguages,
                     ),
@@ -216,7 +286,6 @@ extension AppDatabase {
                 ))
             }
         }
-        return DictionaryCatalogue(installed: installed, unreadable: unreadable)
     }
 
     /// Where a dictionary the reader has not ordered should sit.

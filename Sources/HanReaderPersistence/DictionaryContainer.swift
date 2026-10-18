@@ -311,6 +311,20 @@ public struct DictionaryContainer: Sendable {
         }
     }
 
+    /// Whether this file is an import that stopped part way.
+    ///
+    /// The job row is cleared when an import finishes, so its presence is
+    /// the file saying so itself. Worth asking, because a half-imported
+    /// container has no metadata yet and would otherwise be reported as
+    /// unreadable — which is both wrong and unhelpful, since the answer is
+    /// to import it again and it will carry on.
+    public func hasUnfinishedImport() throws -> Bool {
+        try dbQueue.read { db in
+            guard try db.tableExists("importJob") else { return false }
+            return try Int.fetchOne(db, sql: "SELECT count(*) FROM importJob") ?? 0 > 0
+        }
+    }
+
     public func entryCount() throws -> Int {
         try dbQueue.read { db in
             try Int.fetchOne(db, sql: "SELECT count(*) FROM entry") ?? 0

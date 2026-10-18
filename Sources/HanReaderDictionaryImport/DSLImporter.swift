@@ -73,6 +73,35 @@ public struct DSLImportSummary: Hashable, Sendable {
 /// most ten times a second, and always once at the end so a bar cannot stop
 /// short of full.
 public struct DSLImporter: Sendable {
+    /// What the container compiled from this set will be called.
+    ///
+    /// Needed before the import starts, not after, because the destination
+    /// has to be the same file on a second run or an interrupted import
+    /// cannot resume — it would write a new file beside the half-finished
+    /// one. Derived from the same metadata the finished container records,
+    /// so the two cannot disagree.
+    public static func slug(for fileSet: DSLFileSet) -> String {
+        metadata(
+            for: fileSet,
+            entryCount: 0,
+            fileName: fileSet.files.first?.lastPathComponent ?? "dictionary",
+        ).slug
+    }
+
+    /// What the compiled dictionary will be called.
+    ///
+    /// The same name the finished container records, so the progress banner
+    /// and the installed list cannot disagree — the raw header says
+    /// `大БКРС - 250920 ( 1 / 3 )`, and the volume count belongs to the file
+    /// rather than to the dictionary the three of them compile into.
+    public static func displayName(for fileSet: DSLFileSet) -> String {
+        metadata(
+            for: fileSet,
+            entryCount: 0,
+            fileName: fileSet.files.first?.lastPathComponent ?? "dictionary",
+        ).displayName
+    }
+
     /// Bumped when a parser change alters what gets written.
     ///
     /// A container built by an older parser is rebuilt rather than migrated,
