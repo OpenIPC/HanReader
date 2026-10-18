@@ -31,6 +31,19 @@ public struct DictionaryPreference: Hashable, Sendable {
     }
 }
 
+extension DictionaryPreference {
+    /// A copy with one permission changed.
+    public func with(glosses: Bool? = nil, readings: Bool? = nil, lexicon: Bool? = nil) -> Self {
+        Self(
+            slug: slug,
+            providesGlosses: glosses ?? providesGlosses,
+            providesReadings: readings ?? providesReadings,
+            providesLexicon: lexicon ?? providesLexicon,
+            sortOrder: sortOrder,
+        )
+    }
+}
+
 /// An installed dictionary, as the reader's list shows it.
 public struct InstalledDictionary: Hashable, Sendable {
     /// From the container's own `meta`, never from a copy.
@@ -80,14 +93,46 @@ public struct UnreadableDictionary: Hashable, Sendable {
 public struct DictionaryCatalogue: Sendable {
     public let installed: [InstalledDictionary]
     public let unreadable: [UnreadableDictionary]
+    /// Imports that stopped part way, which the file says of itself by still
+    /// carrying its job row. Not failures: importing the same source again
+    /// carries on from where it stopped.
+    public let unfinished: [URL]
 
-    public init(installed: [InstalledDictionary], unreadable: [UnreadableDictionary] = []) {
+    public init(
+        installed: [InstalledDictionary],
+        unreadable: [UnreadableDictionary] = [],
+        unfinished: [URL] = [],
+    ) {
         self.installed = installed
         self.unreadable = unreadable
+        self.unfinished = unfinished
     }
 
     /// The extension a compiled dictionary has.
     public static let fileExtension = "hanreaderdict"
+
+    /// What an import writes to until it finishes.
+    ///
+    /// A separate name, not the final one, and that settles three things at
+    /// once. A reader re-importing a dictionary they already have does not
+    /// lose it the moment the new import opens its destination and clears it.
+    /// A container that stopped part way is recognised as unfinished by its
+    /// name, so it needs no metadata, no job row and — crucially — no
+    /// read-only open, which a half-written database in write-ahead mode
+    /// cannot survive once its sidecar files are gone. And the name is still
+    /// derived from the dictionary's own slug, so importing the same source
+    /// again lands on the same file and carries on.
+    public static let partialExtension = "hanreaderdict-import"
+
+    /// Where an import of this dictionary should write.
+    public static func partialFile(forSlug slug: String, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(slug).\(partialExtension)")
+    }
+
+    /// Where it belongs once it is finished.
+    public static func finishedFile(forSlug slug: String, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(slug).\(fileExtension)")
+    }
 
     public var isEmpty: Bool {
         installed.isEmpty
@@ -122,6 +167,24 @@ extension DictionaryCatalogue {
             }
         }
         return (DictionarySet(members: members), failures)
+    }
+
+    /// The toneless syllables the installed dictionaries use.
+    ///
+    /// Needed when importing a new one: a DSL dictionary writes its readings
+    /// as diacritics, and splitting `tǔ'ěrqísītǎn` into syllables is what
+    /// makes it comparable with CC-CEDICT's numeric form. Without them a
+    /// reading still displays exactly as written and only the
+    /// cross-dictionary merge key is lost, so this degrades rather than
+    /// fails.
+    public func syllableBases() -> Set<String> {
+        var bases: Set<String> = []
+        for entry in installed where entry.providesReadings {
+            bases.formUnion(
+                (try? DictionaryContainer(contentsOf: entry.file).syllableBases()) ?? [],
+            )
+        }
+        return bases
     }
 
     /// The segmentation word list, from the dictionaries allowed to supply
@@ -177,19 +240,56 @@ extension AppDatabase {
             // the file system happens to answer in.
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .map { ($0, false) }
+        // Recognised by name rather than by opening it. A container an
+        // import did not finish has no metadata to read, and may not open
+        // read-only at all.
+        let partial = contents
+            .filter { $0.pathExtension == DictionaryCatalogue.partialExtension }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         let preferences = try await library.dictionaryPreferences()
+        var catalogue = Accumulator()
+        for (url, isBuiltIn) in files {
+            catalogue.add(
+                url,
+                isBuiltIn: isBuiltIn,
+                preferences: preferences,
+                preferredLanguages: preferredLanguages,
+            )
+        }
+        return catalogue.result(unfinished: partial)
+    }
+
+    /// Builds a catalogue one file at a time.
+    ///
+    /// Three outcomes per file, and keeping them apart is the point: a
+    /// dictionary, an import that stopped part way, and a file that is not
+    /// either. Only the last is a failure.
+    private struct Accumulator {
         var installed: [InstalledDictionary] = []
         var unreadable: [UnreadableDictionary] = []
 
-        for (url, isBuiltIn) in files {
+        func result(unfinished: [URL]) -> DictionaryCatalogue {
+            DictionaryCatalogue(
+                installed: installed,
+                unreadable: unreadable,
+                unfinished: unfinished,
+            )
+        }
+
+        mutating func add(
+            _ url: URL,
+            isBuiltIn: Bool,
+            preferences: [String: DictionaryPreference],
+            preferredLanguages: [String],
+        ) {
             do {
                 guard let metadata = try DictionaryContainer(contentsOf: url).metadata() else {
                     unreadable.append(UnreadableDictionary(
                         file: url,
                         reason: "the file has no dictionary metadata",
                     ))
-                    continue
+                    return
                 }
                 let stored = preferences[metadata.slug]
                 installed.append(InstalledDictionary(
@@ -204,7 +304,7 @@ extension AppDatabase {
                     // word-level, and it is the lexicon the reader has until
                     // they say otherwise.
                     providesLexicon: stored?.providesLexicon ?? isBuiltIn,
-                    sortOrder: stored?.sortOrder ?? defaultOrder(
+                    sortOrder: stored?.sortOrder ?? AppDatabase.defaultOrder(
                         for: metadata,
                         preferredLanguages: preferredLanguages,
                     ),
@@ -216,7 +316,6 @@ extension AppDatabase {
                 ))
             }
         }
-        return DictionaryCatalogue(installed: installed, unreadable: unreadable)
     }
 
     /// Where a dictionary the reader has not ordered should sit.

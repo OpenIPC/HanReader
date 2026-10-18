@@ -148,8 +148,17 @@ public struct DSLFileSet: Hashable, Sendable {
                 continue
             }
             guard visited.insert(target).inserted else { continue }
+            // A volume that is there but cannot be read is reported the same
+            // way as one that is absent, rather than failing the whole
+            // discovery. Under a sandbox the reader's choice of one file need
+            // not grant access to its siblings, and a dictionary importing
+            // two volumes of three with a diagnostic beats one importing
+            // nothing with an error.
+            guard let nested = try? DSLHeader.read(from: DSLFileBytes(url: target)) else {
+                diagnostics.append(DSLDiagnostic(kind: .missingInclude(name), text: name))
+                continue
+            }
             files.append(target)
-            let nested = try DSLHeader.read(from: DSLFileBytes(url: target))
             queue += nested.includes.map { (parent: target, name: $0) }
         }
         return Self(

@@ -71,6 +71,35 @@ final class AppServices: Sendable {
     static func launch(bundle: Bundle = .main) async throws -> AppServices {
         let locations = try AppDatabase.Locations.standard()
         let library = try LibraryRepository(locations: locations)
+        return try await opening(
+            library: library,
+            locations: locations,
+            bundle: bundle,
+        )
+    }
+
+    /// The same services with the dictionaries read again.
+    ///
+    /// Built rather than mutated. Importing a dictionary changes what every
+    /// lookup answers, what the ruby says and which words the segmenter
+    /// finds, and threading that through live state would mean a mutable set
+    /// behind a lock in a type the whole app holds. Opening the containers
+    /// again costs milliseconds, and the caches it discards are caches of
+    /// answers that have just changed.
+    ///
+    /// The library is kept: it is the reader's own data, and reopening it
+    /// would be a second handle on the same file for no reason.
+    func reloadingDictionaries(bundle: Bundle = .main) async throws -> AppServices {
+        try await Self.opening(library: library, locations: locations, bundle: bundle)
+    }
+
+    private static func opening(
+        library: LibraryRepository,
+        locations: AppDatabase.Locations,
+        bundle: Bundle,
+    ) async throws
+        -> AppServices
+    {
         let catalogue = try await AppDatabase.catalogue(
             in: locations.dictionaryDirectory,
             bundled: bundle.url(

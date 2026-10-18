@@ -105,5 +105,23 @@ it needs to read like release notes rather than a commit log.
   than assumed, and when a file cannot be identified the reader is shown a
   preview of each candidate instead of an error. Every imported file is
   copied in behind one security-scoped boundary, on both platforms.
+- **Your own dictionary.** Import an ABBYY DSL dictionary — 大БКРС, 3.4 million
+  cards — from inside the app, with progress, a Stop that keeps what it has
+  already imported, and a resume that carries on from there rather than
+  starting again. Interrupting it, including by force-quitting the app, is
+  safe.
+- Definitions with their structure intact: numbered senses under Roman-numeral
+  divisions, parts of speech, registers and usage examples. The predecessor
+  flattened every card into a single unseparated string — one sense per entry
+  across all 3.4 million of them — where 爱 has 32 senses and 一 and 打 have 57
+  each.
+- Several dictionaries at once, grouped by reading rather than by dictionary,
+  so 了's `le` and `liǎo` each show what every dictionary says about them. The
+  answers are never merged and always say which dictionary they came from.
+- A dictionary can supply definitions, readings, or the word list your text is
+  split into, each separately — because a dictionary you do not read can still
+  be the one that knows how a character is pronounced. A dictionary you have
+  not ordered sorts by its language against yours, so a Russian-speaking
+  reader sees a Russian dictionary first with no configuration.
 
 [Unreleased]: https://github.com/OpenIPC/HanReader/commits/main

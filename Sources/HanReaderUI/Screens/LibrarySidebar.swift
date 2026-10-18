@@ -8,6 +8,7 @@ struct LibrarySidebar: View {
     let model: LibraryModel
     @Binding var selection: TextID?
     let onImport: () -> Void
+    let onShowDictionaries: () -> Void
 
     var body: some View {
         List(selection: $selection) {
@@ -39,6 +40,11 @@ struct LibrarySidebar: View {
             ToolbarItem {
                 Button(action: onImport) {
                     Label("Import a text…", systemImage: "plus")
+                }
+            }
+            ToolbarItem {
+                Button(action: onShowDictionaries) {
+                    Label("Dictionaries", systemImage: "character.book.closed")
                 }
             }
         }
