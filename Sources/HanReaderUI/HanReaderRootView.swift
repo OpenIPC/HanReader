@@ -131,6 +131,9 @@ private struct LibraryAndReader: View {
     let launch: HanReaderLaunch
 
     @State private var isDictionariesPresented = false
+    /// Held here rather than in the sheet, so closing the sheet does not
+    /// abandon a running import.
+    @State private var dictionaryImport: DictionaryImportModel
     @State private var library: LibraryModel
     @State private var importer: TextImporter
     @State private var isFileImporterPresented = false
@@ -169,6 +172,7 @@ private struct LibraryAndReader: View {
         let library = LibraryModel(services: services)
         _library = State(initialValue: library)
         _importer = State(initialValue: TextImporter(library: library))
+        _dictionaryImport = State(initialValue: DictionaryImportModel(services: services))
     }
 
     var body: some View {
@@ -231,7 +235,10 @@ private struct LibraryAndReader: View {
             }
         }
         .sheet(isPresented: $isDictionariesPresented) {
-            DictionariesScreen(services: services) {
+            DictionariesScreen(
+                services: services,
+                importModel: dictionaryImport,
+            ) {
                 await launch.reloadDictionaries()
             }
         }

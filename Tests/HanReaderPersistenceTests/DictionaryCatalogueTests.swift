@@ -260,6 +260,87 @@ struct DictionaryCatalogueTests {
         #expect(try await workspace.catalogue().installed.first?.providesGlosses == true)
     }
 
+    /// Writing the whole row means writing the values the caller read
+    /// *before* the change, so a reader who flicks two switches in quick
+    /// succession has the second write restore what the first one changed.
+    @Test("Two permissions changed at once do not overwrite each other")
+    func concurrentPermissionChanges() async throws {
+        let workspace = try Workspace()
+        try workspace.install(slug: "dabkrs", glossLanguage: "ru")
+        let entry = try #require(try await workspace.catalogue().installed.first)
+        let before = DictionaryPreference(
+            slug: entry.slug,
+            providesGlosses: entry.providesGlosses,
+            providesReadings: entry.providesReadings,
+            providesLexicon: entry.providesLexicon,
+            sortOrder: entry.sortOrder,
+        )
+
+        // Both started from the same snapshot, as two taps in a row are.
+        try await workspace.library.setDictionaryPermission(
+            .glosses,
+            to: false,
+            matching: before,
+        )
+        try await workspace.library.setDictionaryPermission(
+            .readings,
+            to: false,
+            matching: before,
+        )
+
+        let after = try #require(try await workspace.catalogue().installed.first)
+        #expect(!after.providesGlosses, "the second change restored the first")
+        #expect(!after.providesReadings)
+    }
+
+    /// The first write has to carry the values the catalogue was showing,
+    /// including a sort order that came from the reader's languages rather
+    /// than from zero.
+    @Test("The first change keeps the order the catalogue was showing")
+    func firstChangeKeepsOrder() async throws {
+        let workspace = try Workspace()
+        try workspace.install(slug: "dabkrs", glossLanguage: "ru")
+        let entry = try #require(
+            try await workspace.catalogue(preferredLanguages: ["ru"]).installed.first,
+        )
+        try await workspace.library.setDictionaryPermission(
+            .lexicon,
+            to: true,
+            matching: DictionaryPreference(
+                slug: entry.slug,
+                providesGlosses: entry.providesGlosses,
+                providesReadings: entry.providesReadings,
+                providesLexicon: entry.providesLexicon,
+                sortOrder: entry.sortOrder,
+            ),
+        )
+        let after = try #require(try await workspace.catalogue().installed.first)
+        #expect(after.providesLexicon)
+        #expect(after.sortOrder == entry.sortOrder)
+    }
+
+    /// Recognised by name, so an unfinished container needs no metadata, no
+    /// job row and no read-only open.
+    @Test("An in-progress container is listed as unfinished")
+    func unfinishedByName() async throws {
+        let workspace = try Workspace()
+        try workspace.install(slug: "cc-cedict", glossLanguage: "en")
+        try FileManager.default.createDirectory(
+            at: workspace.directory,
+            withIntermediateDirectories: true,
+        )
+        // Not even a database: the name alone is what says it is unfinished.
+        try Data("half written".utf8).write(to: DictionaryCatalogue.partialFile(
+            forSlug: "dabkrs",
+            in: workspace.directory,
+        ))
+
+        let catalogue = try await workspace.catalogue()
+        #expect(catalogue.installed.map(\.slug) == ["cc-cedict"])
+        #expect(catalogue.unfinished.count == 1)
+        #expect(catalogue.unreadable.isEmpty)
+    }
+
     // MARK: - Opening the set
 
     @Test("The set is built in the reader's order")

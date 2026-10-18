@@ -85,11 +85,15 @@ final class DictionaryImportModel {
                 }
 
                 let fileSet = try DSLFileSet.discover(from: url)
-                let destination = services.locations.dictionaryDirectory
-                    .appendingPathComponent(
-                        "\(DSLImporter.slug(for: fileSet))."
-                            + DictionaryCatalogue.fileExtension,
-                    )
+                let slug = DSLImporter.slug(for: fileSet)
+                let directory = services.locations.dictionaryDirectory
+                // Written under a name of its own until it is finished, so a
+                // reader re-importing a dictionary they already have keeps
+                // the one they have until the new one is complete.
+                let destination = DictionaryCatalogue.partialFile(
+                    forSlug: slug,
+                    in: directory,
+                )
                 await MainActor.run {
                     self.name = DSLImporter.displayName(for: fileSet)
                 }
@@ -108,15 +112,34 @@ final class DictionaryImportModel {
                     )
                 }.value
 
-                phase = summary.completed
-                    ? .finished(summary)
-                    : .cancelled(entries: summary.entriesWritten)
-                // Even a stopped import leaves entries behind, and a reader
-                // who stops one should see what it managed.
-                await onFinished()
+                if summary.completed {
+                    try Self.install(destination, as: slug, in: directory)
+                    phase = .finished(summary)
+                } else {
+                    phase = .cancelled(entries: summary.entriesWritten)
+                }
             } catch {
                 phase = .failed(String(describing: error))
             }
+            // Always, including after a failure: a run that threw may still
+            // have left a part-written container, and a list that does not
+            // mention it is a list the reader cannot act on.
+            await onFinished()
+        }
+    }
+
+    /// Puts a finished container where the reader's dictionaries live,
+    /// replacing any earlier copy in one step.
+    ///
+    /// `replaceItemAt` rather than remove-then-move: the moment between the
+    /// two is a moment with no dictionary, and a crash in it loses one the
+    /// reader already had.
+    private static func install(_ partial: URL, as slug: String, in directory: URL) throws {
+        let destination = DictionaryCatalogue.finishedFile(forSlug: slug, in: directory)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: partial)
+        } else {
+            try FileManager.default.moveItem(at: partial, to: destination)
         }
     }
 

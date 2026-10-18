@@ -31,6 +31,19 @@ public struct DictionaryPreference: Hashable, Sendable {
     }
 }
 
+extension DictionaryPreference {
+    /// A copy with one permission changed.
+    public func with(glosses: Bool? = nil, readings: Bool? = nil, lexicon: Bool? = nil) -> Self {
+        Self(
+            slug: slug,
+            providesGlosses: glosses ?? providesGlosses,
+            providesReadings: readings ?? providesReadings,
+            providesLexicon: lexicon ?? providesLexicon,
+            sortOrder: sortOrder,
+        )
+    }
+}
+
 /// An installed dictionary, as the reader's list shows it.
 public struct InstalledDictionary: Hashable, Sendable {
     /// From the container's own `meta`, never from a copy.
@@ -97,6 +110,29 @@ public struct DictionaryCatalogue: Sendable {
 
     /// The extension a compiled dictionary has.
     public static let fileExtension = "hanreaderdict"
+
+    /// What an import writes to until it finishes.
+    ///
+    /// A separate name, not the final one, and that settles three things at
+    /// once. A reader re-importing a dictionary they already have does not
+    /// lose it the moment the new import opens its destination and clears it.
+    /// A container that stopped part way is recognised as unfinished by its
+    /// name, so it needs no metadata, no job row and — crucially — no
+    /// read-only open, which a half-written database in write-ahead mode
+    /// cannot survive once its sidecar files are gone. And the name is still
+    /// derived from the dictionary's own slug, so importing the same source
+    /// again lands on the same file and carries on.
+    public static let partialExtension = "hanreaderdict-import"
+
+    /// Where an import of this dictionary should write.
+    public static func partialFile(forSlug slug: String, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(slug).\(partialExtension)")
+    }
+
+    /// Where it belongs once it is finished.
+    public static func finishedFile(forSlug slug: String, in directory: URL) -> URL {
+        directory.appendingPathComponent("\(slug).\(fileExtension)")
+    }
 
     public var isEmpty: Bool {
         installed.isEmpty
@@ -204,6 +240,12 @@ extension AppDatabase {
             // the file system happens to answer in.
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .map { ($0, false) }
+        // Recognised by name rather than by opening it. A container an
+        // import did not finish has no metadata to read, and may not open
+        // read-only at all.
+        let partial = contents
+            .filter { $0.pathExtension == DictionaryCatalogue.partialExtension }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
         let preferences = try await library.dictionaryPreferences()
         var catalogue = Accumulator()
@@ -215,7 +257,7 @@ extension AppDatabase {
                 preferredLanguages: preferredLanguages,
             )
         }
-        return catalogue.result
+        return catalogue.result(unfinished: partial)
     }
 
     /// Builds a catalogue one file at a time.
@@ -226,9 +268,8 @@ extension AppDatabase {
     private struct Accumulator {
         var installed: [InstalledDictionary] = []
         var unreadable: [UnreadableDictionary] = []
-        var unfinished: [URL] = []
 
-        var result: DictionaryCatalogue {
+        func result(unfinished: [URL]) -> DictionaryCatalogue {
             DictionaryCatalogue(
                 installed: installed,
                 unreadable: unreadable,
@@ -243,22 +284,11 @@ extension AppDatabase {
             preferredLanguages: [String],
         ) {
             do {
-                let container = try DictionaryContainer(contentsOf: url)
-                guard let metadata = try container.metadata() else {
-                    // A container writes its metadata when the import
-                    // finishes, so one without any is either an import that
-                    // stopped — which it says by still carrying its job row
-                    // — or a file that is not a dictionary at all. The
-                    // difference matters: one of them is fixed by importing
-                    // it again, and the other never will be.
-                    if (try? container.hasUnfinishedImport()) == true {
-                        unfinished.append(url)
-                    } else {
-                        unreadable.append(UnreadableDictionary(
-                            file: url,
-                            reason: "the file has no dictionary metadata",
-                        ))
-                    }
+                guard let metadata = try DictionaryContainer(contentsOf: url).metadata() else {
+                    unreadable.append(UnreadableDictionary(
+                        file: url,
+                        reason: "the file has no dictionary metadata",
+                    ))
                     return
                 }
                 let stored = preferences[metadata.slug]

@@ -105,7 +105,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M3** — dictionary pipeline and zero-setup first launch
 - [x] **M4** — word segmentation and the line-breaking core
 - [x] **M5** — **the macOS reader: first usable version**
-- [ ] **M6** — BKRS DSL import
+- [x] **M6** — **BKRS DSL import**
 - [ ] **M7** — audio playback
 - [ ] **M8** — iOS and iPadOS
 - [ ] **M9** — accessibility and Russian localization

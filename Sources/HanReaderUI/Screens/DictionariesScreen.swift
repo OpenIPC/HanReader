@@ -14,18 +14,17 @@ import UniformTypeIdentifiers
 /// app — including one whose licence the app has never heard of.
 struct DictionariesScreen: View {
     let services: AppServices
+    /// Owned above this sheet, deliberately. As sheet-local state, closing
+    /// the sheet discarded the model and its Stop button while the import
+    /// carried on writing — and reopening it offered a fresh model that
+    /// would happily start the same import a second time, two writers
+    /// resuming from one checkpoint into one file.
+    let importModel: DictionaryImportModel
     let onChange: () async -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var importModel: DictionaryImportModel
     @State private var isFileImporterPresented = false
     @State private var removing: InstalledDictionary?
-
-    init(services: AppServices, onChange: @escaping () async -> Void) {
-        self.services = services
-        self.onChange = onChange
-        _importModel = State(initialValue: DictionaryImportModel(services: services))
-    }
 
     private var installed: [InstalledDictionary] {
         services.catalogue.installed.sorted { $0.sortOrder < $1.sortOrder }
@@ -164,17 +163,21 @@ struct DictionariesScreen: View {
 
     private func update(
         _ entry: InstalledDictionary,
-        _ change: (DictionaryPreference) -> DictionaryPreference,
+        _ permission: LibraryRepository.DictionaryPermission,
+        to value: Bool,
     ) async {
-        let current = DictionaryPreference(
-            slug: entry.slug,
-            providesGlosses: entry.providesGlosses,
-            providesReadings: entry.providesReadings,
-            providesLexicon: entry.providesLexicon,
-            sortOrder: entry.sortOrder,
-        )
         do {
-            try await services.library.save(change(current))
+            try await services.library.setDictionaryPermission(
+                permission,
+                to: value,
+                matching: DictionaryPreference(
+                    slug: entry.slug,
+                    providesGlosses: entry.providesGlosses,
+                    providesReadings: entry.providesReadings,
+                    providesLexicon: entry.providesLexicon,
+                    sortOrder: entry.sortOrder,
+                ),
+            )
             await onChange()
         } catch {
             Log.error("dictionaries", "could not save a preference: \(error)")
@@ -183,14 +186,22 @@ struct DictionariesScreen: View {
 
     private func remove(_ entry: InstalledDictionary) async {
         removing = nil
+        // Whatever happens below, the dictionaries are read again. Half a
+        // removal — the file gone, the preference left, or the other way
+        // round — still has to reach the open reader, which is otherwise
+        // still answering from a container that is no longer there.
+        defer { Task { await onChange() } }
         do {
             try FileManager.default.removeItem(at: entry.file)
+        } catch {
+            Log.error("dictionaries", "could not delete \(entry.slug): \(error)")
+        }
+        do {
             // And the reader's opinion about it, since they asked for it to
             // be gone rather than for it to be temporarily unavailable.
             try await services.library.forgetDictionary(entry.slug)
-            await onChange()
         } catch {
-            Log.error("dictionaries", "could not remove \(entry.slug): \(error)")
+            Log.error("dictionaries", "could not forget \(entry.slug): \(error)")
         }
     }
 
@@ -203,18 +214,6 @@ struct DictionariesScreen: View {
         UTType(filenameExtension: "dsl") ?? .data,
         .data,
     ]
-}
-
-extension DictionaryPreference {
-    func with(glosses: Bool? = nil, readings: Bool? = nil, lexicon: Bool? = nil) -> Self {
-        Self(
-            slug: slug,
-            providesGlosses: glosses ?? providesGlosses,
-            providesReadings: readings ?? providesReadings,
-            providesLexicon: lexicon ?? providesLexicon,
-            sortOrder: sortOrder,
-        )
-    }
 }
 
 // MARK: - One dictionary, and the import running over it
@@ -238,13 +237,13 @@ extension DictionariesScreen {
                 .foregroundStyle(.secondary)
 
             permission("Definitions", isOn: entry.providesGlosses) {
-                await update(entry) { $0.with(glosses: !entry.providesGlosses) }
+                await update(entry, .glosses, to: !entry.providesGlosses)
             }
             permission("Readings", isOn: entry.providesReadings) {
-                await update(entry) { $0.with(readings: !entry.providesReadings) }
+                await update(entry, .readings, to: !entry.providesReadings)
             }
             permission("Word list", isOn: entry.providesLexicon) {
-                await update(entry) { $0.with(lexicon: !entry.providesLexicon) }
+                await update(entry, .lexicon, to: !entry.providesLexicon)
             }
 
             // The licence obligation, in the reader's hands rather than in a
@@ -336,16 +335,6 @@ extension DictionariesScreen {
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
                 Button("Dismiss") { importModel.reset() }.font(.caption)
-            }
-        }
-        .task(id: importModel.phase) {
-            // The list is built from the catalogue, so it only shows a new
-            // dictionary once the catalogue has been read again.
-            if case .finished = importModel.phase {
-                await onChange()
-            }
-            if case .cancelled = importModel.phase {
-                await onChange()
             }
         }
         .fixedSize(horizontal: false, vertical: true)

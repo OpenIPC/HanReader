@@ -99,10 +99,93 @@ struct DictionaryImportModelTests {
 
         await run(model, source)
 
-        let expected = services.locations.dictionaryDirectory
-            .appendingPathComponent("example-dictionary-010203.hanreaderdict")
+        let expected = DictionaryCatalogue.finishedFile(
+            forSlug: "example-dictionary-010203",
+            in: services.locations.dictionaryDirectory,
+        )
         #expect(FileManager.default.fileExists(atPath: expected.path))
         #expect(try DictionaryContainer(contentsOf: expected).entryCount() == 10)
+        // And nothing left behind under the in-progress name.
+        #expect(!FileManager.default.fileExists(atPath: DictionaryCatalogue.partialFile(
+            forSlug: "example-dictionary-010203",
+            in: services.locations.dictionaryDirectory,
+        ).path))
+    }
+
+    /// A reader re-importing a dictionary they already have must not lose it
+    /// while the new import runs: the writer clears its destination when it
+    /// cannot resume into it, so the destination must not be the dictionary
+    /// they are using.
+    @Test("An import in progress does not occupy the installed dictionary's place")
+    func inProgressImportLeavesTheInstalledOneAlone() async throws {
+        let workspace = try Workspace()
+        let source = try workspace.write("a.dsl", cards: 30)
+        let services = try AppServices.inMemory()
+        let installed = DictionaryCatalogue.finishedFile(
+            forSlug: "example-dictionary-010203",
+            in: services.locations.dictionaryDirectory,
+        )
+
+        // A first import, finished.
+        await run(DictionaryImportModel(services: services), source)
+        #expect(try DictionaryContainer(contentsOf: installed).entryCount() == 30)
+
+        // A second one, stopped before it can finish.
+        let model = DictionaryImportModel(services: services)
+        model.start(source) {}
+        model.stop()
+        while model.isRunning {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        // The dictionary the reader had is still a dictionary.
+        #expect(try DictionaryContainer(contentsOf: installed).entryCount() == 30)
+    }
+
+    /// A stopped import is recognised by its name, which needs no metadata
+    /// and — crucially — no read-only open: a half-written database in
+    /// write-ahead mode may not survive one.
+    @Test("A stopped import is listed as unfinished, not unreadable")
+    func stoppedImportIsUnfinished() async throws {
+        let workspace = try Workspace()
+        let source = try workspace.write("a.dsl", cards: 200)
+        let services = try AppServices.inMemory()
+
+        let model = DictionaryImportModel(services: services)
+        model.start(source) {}
+        model.stop()
+        while model.isRunning {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let catalogue = try await AppDatabase.catalogue(
+            in: services.locations.dictionaryDirectory,
+            bundled: nil,
+            library: services.library,
+        )
+        #expect(catalogue.unreadable.isEmpty)
+        #expect(catalogue.unfinished.count == 1)
+        #expect(catalogue.installed.isEmpty)
+    }
+
+    /// Including after a failure: a run that threw may still have left a
+    /// part-written container, and a list that does not mention it is a list
+    /// the reader cannot act on.
+    @Test("The catalogue is read again however the import ends")
+    func reloadsEvenOnFailure() async throws {
+        let workspace = try Workspace()
+        let url = workspace.root.appendingPathComponent("missing.dsl")
+        let services = try AppServices.inMemory()
+        let model = DictionaryImportModel(services: services)
+
+        var reloaded = false
+        await withCheckedContinuation { continuation in
+            model.start(url) {
+                reloaded = true
+                continuation.resume()
+            }
+        }
+        #expect(reloaded)
     }
 
     @Test("A file that is not a dictionary fails rather than hangs")

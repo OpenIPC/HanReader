@@ -378,6 +378,59 @@ extension LibraryRepository {
         }
     }
 
+    /// Which of a dictionary's three permissions a change is about.
+    public enum DictionaryPermission: Sendable {
+        case glosses
+        case readings
+        case lexicon
+
+        fileprivate var column: String {
+            switch self {
+            case .glosses: "providesGlosses"
+            case .readings: "providesReadings"
+            case .lexicon: "providesLexicon"
+            }
+        }
+    }
+
+    /// Changes one permission, leaving the others as they are.
+    ///
+    /// One column, not the whole row. Writing the whole row means writing the
+    /// values the caller read before the change — so a reader who flicks two
+    /// switches in quick succession has the second write restore what the
+    /// first one changed, and one of their switches silently flicks back.
+    ///
+    /// `current` is only used if there is no row yet, where every column has
+    /// to be given a value and the right ones are the defaults the catalogue
+    /// was already showing — including a sort order that came from the
+    /// reader's own languages rather than from zero.
+    public func setDictionaryPermission(
+        _ permission: DictionaryPermission,
+        to value: Bool,
+        matching current: DictionaryPreference,
+    ) async throws {
+        let inserted = switch permission {
+        case .glosses: current.with(glosses: value)
+        case .readings: current.with(readings: value)
+        case .lexicon: current.with(lexicon: value)
+        }
+        try await dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO dictionaryPreference
+                    (slug, providesGlosses, providesReadings, providesLexicon, sortOrder)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET \(permission.column) = ?
+            """, arguments: [
+                inserted.slug,
+                inserted.providesGlosses,
+                inserted.providesReadings,
+                inserted.providesLexicon,
+                inserted.sortOrder,
+                value,
+            ])
+        }
+    }
+
     /// Records what the reader decided about one dictionary.
     public func save(_ preference: DictionaryPreference) async throws {
         try await dbQueue.write { db in
