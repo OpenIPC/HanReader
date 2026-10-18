@@ -74,21 +74,22 @@ struct DictionaryServiceTests {
     @Test("Looks a word up")
     func lookup() async {
         let service = DictionaryService(lookup: stub())
-        let reading = await service.reading(for: "中国")
+        let reading = await service.reading(for: ReadingRequest(word: "中国"))
         #expect(reading?.display == "Zhōngguó")
     }
 
     @Test("A whole window of words is one call")
     func batched() async {
         let service = DictionaryService(lookup: stub())
-        let readings = await service.readings(for: ["中国", "北京", "unknown"])
+        let readings = await service
+            .readings(for: ["中国", "北京", "unknown"].map { ReadingRequest(word: $0) })
 
-        #expect(readings["中国"]?.display == "Zhōngguó")
-        #expect(readings["北京"]?.source == .composed)
+        #expect(readings[ReadingRequest(word: "中国")]?.display == "Zhōngguó")
+        #expect(readings[ReadingRequest(word: "北京")]?.source == .composed)
         // Words with no reading are absent rather than present-and-nil: on
         // the page the two are indistinguishable, so the caller should not
         // have to tell them apart either.
-        #expect(readings["unknown"] == nil)
+        #expect(readings[ReadingRequest(word: "unknown")] == nil)
         #expect(readings.count == 2)
     }
 
@@ -98,7 +99,7 @@ struct DictionaryServiceTests {
         let service = DictionaryService(lookup: dictionary)
 
         for _ in 0 ..< 10 {
-            _ = await service.reading(for: "中国")
+            _ = await service.reading(for: ReadingRequest(word: "中国"))
         }
         #expect(dictionary.wordQueries == 1)
     }
@@ -113,7 +114,7 @@ struct DictionaryServiceTests {
         let service = DictionaryService(lookup: dictionary)
 
         for _ in 0 ..< 10 {
-            _ = await service.reading(for: "龘龘龘")
+            _ = await service.reading(for: ReadingRequest(word: "龘龘龘"))
         }
         #expect(dictionary.wordQueries == 1)
         // And it did not keep re-trying the character fallback either.
@@ -125,9 +126,9 @@ struct DictionaryServiceTests {
         let dictionary = stub()
         let service = DictionaryService(lookup: dictionary)
 
-        _ = await service.reading(for: "中国")
+        _ = await service.reading(for: ReadingRequest(word: "中国"))
         await service.clearCaches()
-        _ = await service.reading(for: "中国")
+        _ = await service.reading(for: ReadingRequest(word: "中国"))
         #expect(dictionary.wordQueries == 2)
     }
 
@@ -171,7 +172,7 @@ struct DictionaryServiceTests {
         let dictionary = stub()
         let service = DictionaryService(lookup: dictionary)
 
-        _ = await service.reading(for: "中国")
+        _ = await service.reading(for: ReadingRequest(word: "中国"))
         _ = await service.entries(for: "中国")
         #expect(dictionary.wordQueries == 1)
     }
@@ -182,7 +183,7 @@ struct DictionaryServiceTests {
         let service = DictionaryService(lookup: dictionary)
 
         _ = await service.entries(for: "中国")
-        _ = await service.reading(for: "中国")
+        _ = await service.reading(for: ReadingRequest(word: "中国"))
         #expect(dictionary.wordQueries == 1)
     }
 
@@ -198,7 +199,7 @@ struct DictionaryServiceTests {
         dictionary.failsAlways = true
         let service = DictionaryService(lookup: dictionary)
 
-        #expect(await service.reading(for: "中国") == nil)
+        #expect(await service.reading(for: ReadingRequest(word: "中国")) == nil)
         #expect(await service.entries(for: "中国").isEmpty)
     }
 
@@ -209,7 +210,7 @@ struct DictionaryServiceTests {
         let service = DictionaryService(lookup: dictionary)
 
         for _ in 0 ..< 10 {
-            _ = await service.reading(for: "中国")
+            _ = await service.reading(for: ReadingRequest(word: "中国"))
         }
         #expect(dictionary.wordQueries == 1)
     }

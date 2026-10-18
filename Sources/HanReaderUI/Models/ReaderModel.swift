@@ -24,6 +24,45 @@ struct WordDetail: Equatable, Sendable {
         groups.flatMap { $0.entries.map(\.entry) }
     }
 
+    /// The groups, with the one the reader is actually looking at first.
+    ///
+    /// Groups arrive in the order their reading was first seen, which for 重
+    /// is `chóng` before `zhòng` because that is CC-CEDICT's row order. Once
+    /// the context rule has chosen `zhòng` for 很重, opening the panel on
+    /// `chóng` makes the reader hunt for the sense that belongs to the word
+    /// in front of them.
+    var orderedGroups: [ReadingGroup] {
+        let shown = groupsForDisplayedReading
+        guard !shown.isEmpty else { return groups }
+        return shown + groups.filter { group in
+            !shown.contains { $0.readingKey == group.readingKey }
+        }
+    }
+
+    /// The entries whose reading is the one shown above the word.
+    ///
+    /// The one-line summary has to come from these rather than from whatever
+    /// group happens to be first: 重 is `chóng` "to repeat" and `zhòng`
+    /// "heavy", and with the reading chosen by context the panel read
+    /// "zhòng — to repeat", contradicting the ruby directly above the word.
+    ///
+    /// Falls back to every entry when nothing matches, which is the case for
+    /// a reading composed from characters — there is no group for it, and the
+    /// word's senses are better than none.
+    var entriesForDisplayedReading: [DictionaryEntry] {
+        let matching = groupsForDisplayedReading.flatMap { $0.entries.map(\.entry) }
+        return matching.isEmpty ? entries : matching
+    }
+
+    /// The groups spelling the reading on screen, which is normally one and
+    /// is none when the reading was composed from characters.
+    private var groupsForDisplayedReading: [ReadingGroup] {
+        guard let display = reading?.display else { return [] }
+        return groups.filter {
+            $0.readingDisplay.caseInsensitiveCompare(display) == .orderedSame
+        }
+    }
+
     /// Whether any dictionary defines this word.
     ///
     /// A word can have a reading and no entry — composed from its
@@ -74,7 +113,11 @@ final class ReaderModel {
     /// and a few thousand distinct words. Keying by token also implies that
     /// two instances of a word could be annotated differently, which nothing
     /// here can decide and so should not be able to express.
-    private(set) var readings: [String: TokenReading] = [:]
+    /// Keyed on word *and* context rather than on the word alone, because a
+    /// heteronym has no single answer: 重 is `zhòng` in 很重 and `chóng` in
+    /// 重复. Still bounded by the reader's vocabulary rather than by the
+    /// length of the book, since a context is one of a handful of classes.
+    private(set) var readings: [ReadingRequest: TokenReading] = [:]
 
     private(set) var selection: TokenID?
     private(set) var reveal: RevealSet
@@ -206,15 +249,21 @@ final class ReaderModel {
     func refreshReadings() async {
         guard let document else { return }
         let range = Self.window(around: topBlock ?? 0, in: document)
-        let words = Set(
-            document.blocks[range]
-                .flatMap(\.tokens)
-                .filter(\.isLookupCandidate)
-                .map(\.text),
-        )
+        var requests: Set<ReadingRequest> = []
+        // Per block, because `ReadingContext.contexts(in:)` is what stops a
+        // context reaching across a paragraph break — the last word of one
+        // paragraph does not govern the first word of the next.
+        for block in document.blocks[range] {
+            let contexts = ReadingContext.contexts(in: block.tokens)
+            for (token, context) in zip(block.tokens, contexts)
+                where token.isLookupCandidate
+            {
+                requests.insert(ReadingRequest(word: token.text, context: context))
+            }
+        }
         // Only what is not already known, so scrolling back over text that
         // has been read costs nothing.
-        let missing = words.subtracting(readings.keys)
+        let missing = requests.subtracting(readings.keys)
         guard !missing.isEmpty else { return }
 
         let fetched = await services.dictionary.readings(for: missing)
@@ -253,7 +302,7 @@ final class ReaderModel {
             selection = id
             reveal.reveal(token)
             persistReveal(of: token.text, revealed: true)
-            loadDetail(for: token.text)
+            loadDetail(for: token.text, context: context(of: id))
         }
     }
 
@@ -268,7 +317,14 @@ final class ReaderModel {
         detail = .empty
     }
 
-    private func loadDetail(for word: String) {
+    /// The grammatical context of one token, so the panel agrees with the
+    /// ruby above the word rather than showing a different reading for it.
+    private func context(of id: TokenID) -> ReadingContext {
+        guard let document, document.blocks.indices.contains(id.block) else { return .none }
+        return ReadingContext.context(at: id.index, in: document.blocks[id.block].tokens)
+    }
+
+    private func loadDetail(for word: String, context: ReadingContext) {
         detailTask?.cancel()
         detail = .loading(word)
         detailTask = Task {
@@ -283,9 +339,10 @@ final class ReaderModel {
                 // entry is the one composed from its characters. Falling
                 // back to the entries covers a word tapped before its
                 // reading was fetched.
-                reading: readings[word]
+                reading: readings[ReadingRequest(word: word, context: context)]
                     ?? ReadingComposer.reading(
                         from: groups.flatMap { $0.entries.map(\.entry) },
+                        context: context,
                     ),
                 groups: groups,
             ))

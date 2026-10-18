@@ -11,6 +11,17 @@ it needs to read like release notes rather than a commit log.
 
 ## [Unreleased]
 
+### Fixed
+
+- Readings for heteronyms now take the surrounding words into account. 重 in
+  「教学任务很重」 was annotated `chóng` ("to repeat") rather than `zhòng`
+  ("heavy"): with no part-of-speech information the reader fell back to
+  preferring whichever reading the dictionary says most about, and CC-CEDICT
+  says more about `chóng`. A degree adverb or a negator before a character
+  now settles the few cases where that fallback is wrong, and the detail
+  panel's one-line summary follows the reading shown above the word instead
+  of whichever the dictionary happened to list first.
+
 ### Added
 
 - Initial repository scaffolding: license boundary between the MIT-licensed

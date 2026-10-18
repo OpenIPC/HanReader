@@ -20,9 +20,11 @@ import SwiftUI
 struct ParagraphView: View {
     let block: TextBlock
     let style: ReaderStyle
-    /// Readings keyed by word, not by token: bounded by the reader's
-    /// vocabulary rather than by the length of the book.
-    let readings: [String: TokenReading]
+    /// Readings keyed by word *and context*, not by token: still bounded by
+    /// the reader's vocabulary rather than by the length of the book, since a
+    /// context is one of a handful of classes — but 重 after 很 and 重 alone
+    /// are two questions with two answers, so the word alone is not a key.
+    let readings: [ReadingRequest: TokenReading]
     let selection: TokenID?
     /// Which words are revealed, and in which of the two senses.
     ///
@@ -39,7 +41,7 @@ struct ParagraphView: View {
     init(
         block: TextBlock,
         style: ReaderStyle,
-        readings: [String: TokenReading],
+        readings: [ReadingRequest: TokenReading],
         selection: TokenID?,
         reveal: RevealSet,
         onTap: @escaping (TokenID) -> Void,
@@ -50,8 +52,16 @@ struct ParagraphView: View {
         self.selection = selection
         self.reveal = reveal
         self.onTap = onTap
-        flow = zip(block.tokens, ReaderFlow.flowValues(for: block.tokens, style: style))
-            .map(FlowToken.init)
+        // Contexts computed once here, from the same core function the model
+        // uses to decide what to fetch — so the key this view looks up is by
+        // construction the key that was stored, and a heteronym cannot end up
+        // unannotated because the two disagreed about its neighbours.
+        flow = zip(
+            zip(block.tokens, ReadingContext.contexts(in: block.tokens)),
+            ReaderFlow.flowValues(for: block.tokens, style: style),
+        ).map { pair, flow in
+            FlowToken(token: pair.0, context: pair.1, flow: flow)
+        }
     }
 
     var body: some View {
@@ -67,7 +77,7 @@ struct ParagraphView: View {
                 ForEach(flow) { entry in
                     TokenView(
                         token: entry.token,
-                        reading: readings[entry.token.text],
+                        reading: readings[entry.request],
                         emphasis: emphasis(of: entry.token),
                         style: style,
                         onTap: onTap,
@@ -104,9 +114,16 @@ struct ParagraphView: View {
 /// A token and the layout values derived from its neighbours.
 private struct FlowToken: Identifiable {
     let token: Token
+    let context: ReadingContext
     let flow: TokenFlowValue
 
     var id: TokenID {
         token.id
+    }
+
+    /// How this token's reading is keyed, so the view asks the same question
+    /// the model answered.
+    var request: ReadingRequest {
+        ReadingRequest(word: token.text, context: context)
     }
 }
