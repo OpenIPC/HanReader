@@ -231,6 +231,74 @@ struct PrototypeLibraryTests {
         #expect(FileManager.default.fileExists(atPath: copied.path))
     }
 
+    /// Review finding: a migrated library should keep the order the reader
+    /// built it in, rather than having every text stamped with the moment of
+    /// migration.
+    @Test("Migrated texts keep their original import dates")
+    func importDatesAreCarried() async throws {
+        let space = try workspace()
+        let old = try makePrototype(at: space.prototype)
+        let when = 1_500_000_000.0
+        try await old.write { db in
+            try db.execute(
+                sql: "INSERT INTO texts (id, title, content, imported_at) VALUES (?, ?, ?, ?)",
+                arguments: [1, "孔乙己", "我从十二岁起", when],
+            )
+        }
+
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        _ = try await PrototypeLibrary.migrate(
+            from: space.prototype,
+            into: library,
+            locations: space.locations,
+        )
+
+        let item = try #require(try await library.items().first)
+        #expect(abs(item.importedAt.timeIntervalSince1970 - when) < 1)
+    }
+
+    /// Review finding: a file the old container will not let us read used to
+    /// throw out of the whole migration — and because the rename that marks
+    /// it done never ran, it would fail again on every launch for ever.
+    @Test("An unreadable old audio file does not abort the migration")
+    func unreadableAudioDoesNotAbort() async throws {
+        let space = try workspace()
+        let narration = space.root.appendingPathComponent("old.m4a")
+        try Data("old recording".utf8).write(to: narration)
+        // The audio directory's path is occupied by an ordinary file, so
+        // nothing can be written into it. That stands in for the real
+        // failure — a sandbox or permission denial on the old container —
+        // which cannot be staged in a test.
+        try Data().write(to: space.locations.audio)
+
+        let old = try makePrototype(at: space.prototype)
+        try await old.write { db in
+            try db.execute(sql: """
+                INSERT INTO texts (id, title, content, audio_path, imported_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, arguments: [1, "孔乙己", "我从十二岁起", narration.path, 1.0])
+            try db.execute(
+                sql: "INSERT INTO texts (id, title, content, imported_at) VALUES (?, ?, ?, ?)",
+                arguments: [2, "立论", "我梦见自己正在小学校的讲堂上", 2.0],
+            )
+        }
+
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        let outcome = try await PrototypeLibrary.migrateIfPresent(
+            into: library,
+            locations: space.locations,
+        )
+        let result = try #require(outcome)
+
+        // Both texts arrive; only the audio is reported as lost.
+        #expect(result.texts == 2)
+        #expect(result.notes.count == 1)
+        // And the migration is marked done, so it is not retried for ever.
+        #expect(FileManager.default.fileExists(
+            atPath: PrototypeLibrary.migratedFile(near: space.locations.library).path,
+        ))
+    }
+
     @Test("No prototype database means nothing to do")
     func absentPrototypeIsNotAnError() async throws {
         let space = try workspace()
@@ -278,5 +346,95 @@ struct PrototypeLibraryTests {
 private enum AudioAttachmentPath {
     static func file(for track: AudioTrack, in locations: AppDatabase.Locations) -> URL {
         locations.audio.appendingPathComponent(track.relativePath)
+    }
+}
+
+/// What a migration must *not* touch.
+///
+/// A reader who has used both versions has a library that is partly theirs
+/// already — the same text, their own narration for it, their own reading
+/// history. Migration adds what is missing; it does not get to overwrite
+/// what is there.
+@Suite("Prototype migration leaves existing work alone")
+struct PrototypeLibraryExistingWorkTests {
+    /// Review finding: a text already in the library may have a narration
+    /// the reader chose themselves. Replacing it with one from a previous
+    /// version of the app is not a migration, it is a loss.
+    @Test("Migration does not replace audio on a text that was already there")
+    func existingAudioIsNotReplaced() async throws {
+        let space = try workspace()
+        let narration = space.root.appendingPathComponent("old.m4a")
+        try Data("old recording".utf8).write(to: narration)
+
+        let old = try makePrototype(at: space.prototype)
+        try await old.write { db in
+            try db.execute(sql: """
+                INSERT INTO texts (id, title, content, audio_path, imported_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, arguments: [1, "孔乙己", "我从十二岁起", narration.path, 1.0])
+        }
+
+        // The same content is already in the library, with its own audio.
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        let existing = try await library.importText(title: "孔乙己", content: "我从十二岁起")
+        guard case let .imported(id) = existing else {
+            Issue.record("expected a new text")
+            return
+        }
+        try await library.attachAudio(AudioTrack(
+            textID: id,
+            relativePath: "chosen-by-the-reader.m4a",
+            duration: nil,
+            importedAt: Date(),
+        ))
+
+        let outcome = try await PrototypeLibrary.migrate(
+            from: space.prototype,
+            into: library,
+            locations: space.locations,
+        )
+
+        #expect(outcome.alreadyPresent == 1)
+        #expect(outcome.audioTracks == 0)
+        let track = try #require(try await library.audioTrack(for: id))
+        #expect(track.relativePath == "chosen-by-the-reader.m4a")
+    }
+
+    /// Review finding: a text already in the library has its own, newer
+    /// history. Stamping it with a prototype timestamp moves it backwards in
+    /// the sidebar and can change which text opens on launch.
+    @Test("Migration does not move an existing text backwards in time")
+    func existingRecencyIsNotRewound() async throws {
+        let space = try workspace()
+        let old = try makePrototype(at: space.prototype)
+        try await old.write { db in
+            try db.execute(
+                sql: "INSERT INTO texts (id, title, content, imported_at) VALUES (?, ?, ?, ?)",
+                arguments: [1, "孔乙己", "我从十二岁起", 1.0],
+            )
+            try db.execute(sql: """
+                INSERT INTO reading_progress
+                    (text_id, scroll_offset, revealed_words, last_opened_at)
+                VALUES (?, 0, '', ?)
+            """, arguments: [1, 100.0])
+        }
+
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        let existing = try await library.importText(title: "孔乙己", content: "我从十二岁起")
+        guard case let .imported(id) = existing else {
+            Issue.record("expected a new text")
+            return
+        }
+        let recent = Date(timeIntervalSince1970: 1_800_000_000)
+        try await library.markOpened(id, at: recent)
+
+        _ = try await PrototypeLibrary.migrate(
+            from: space.prototype,
+            into: library,
+            locations: space.locations,
+        )
+
+        let item = try #require(try await library.items().first { $0.id == id })
+        #expect(item.lastOpenedAt == recent)
     }
 }

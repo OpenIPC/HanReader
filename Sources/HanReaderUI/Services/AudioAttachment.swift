@@ -62,21 +62,43 @@ enum AudioAttachment {
         // and so the name carries no part of the reader's own filesystem.
         let name = "text-\(text.rawValue).\(url.pathExtension.lowercased())"
         let destination = locations.audio.appendingPathComponent(name)
+        let previous = try await library.audioTrack(for: text)
 
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+        // Copied beside the destination first, then moved into place. The
+        // obvious order — delete the old file, copy the new one — destroys a
+        // working narration the moment the copy fails, leaving a row
+        // pointing at a file that is no longer there.
+        let staging = locations.audio
+            .appendingPathComponent("incoming-\(UUID().uuidString).\(url.pathExtension)")
+        try FileManager.default.copyItem(at: url, to: staging)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
+            } else {
+                try FileManager.default.moveItem(at: staging, to: destination)
+            }
+            try await library.attachAudio(AudioTrack(
+                textID: text,
+                relativePath: name,
+                // Left for the player to discover. Reading it here would mean
+                // loading the asset twice, and a duration the transport has
+                // not confirmed is worse than none.
+                duration: nil,
+                importedAt: Date(),
+            ))
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            throw error
         }
-        try FileManager.default.copyItem(at: url, to: destination)
 
-        try await library.attachAudio(AudioTrack(
-            textID: text,
-            relativePath: name,
-            // Left for the player to discover. Reading it here would mean
-            // loading the asset twice, and a duration the transport has not
-            // confirmed is worse than none.
-            duration: nil,
-            importedAt: Date(),
-        ))
+        // The row holds one path, so a narration replaced by a file with a
+        // different extension leaves the old one on disk with nothing
+        // pointing at it and no way to find it later.
+        if let previous, previous.relativePath != name {
+            try? FileManager.default.removeItem(
+                at: file(for: previous, in: locations),
+            )
+        }
         return destination
     }
 

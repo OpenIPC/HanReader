@@ -142,6 +142,76 @@ struct AudioAttachmentTests {
         #expect(try await library.audioTrack(for: id) != nil)
     }
 
+    /// Review finding: deleting the old file before copying the new one
+    /// destroys a working narration the moment the copy fails, leaving a row
+    /// that points at a file which is no longer there.
+    @Test("A failed replacement leaves the existing narration playable")
+    func failedReplacementKeepsTheOldFile() async throws {
+        let space = try workspace()
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        let id = try await imported(into: library)
+
+        let first = try await AudioAttachment.attach(
+            source(space.root, named: "first.m4a"),
+            to: id,
+            in: space.locations,
+            library: library,
+        )
+        let original = try Data(contentsOf: first)
+
+        // A source that cannot be copied.
+        let missing = space.root.appendingPathComponent("gone.m4a")
+        await #expect(throws: (any Error).self) {
+            try await AudioAttachment.attach(
+                missing,
+                to: id,
+                in: space.locations,
+                library: library,
+            )
+        }
+
+        // The narration the reader had is still there, and still the one the
+        // database names.
+        let track = try #require(try await library.audioTrack(for: id))
+        let file = AudioAttachment.file(for: track, in: space.locations)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(try Data(contentsOf: file) == original)
+        // And nothing half-copied was left lying about.
+        let files = try FileManager.default.contentsOfDirectory(
+            atPath: space.locations.audio.path,
+        )
+        #expect(files == [track.relativePath])
+    }
+
+    /// Review finding: the row holds one path, so replacing an `.m4a` with
+    /// an `.mp3` left the old file on disk with nothing pointing at it and
+    /// no way to find it again.
+    @Test("Replacing with a different format does not orphan the old file")
+    func replacingAcrossFormatsCleansUp() async throws {
+        let space = try workspace()
+        let library = try LibraryRepository.inMemory(audioDirectory: space.locations.audio)
+        let id = try await imported(into: library)
+
+        _ = try await AudioAttachment.attach(
+            source(space.root, named: "first.m4a"),
+            to: id,
+            in: space.locations,
+            library: library,
+        )
+        _ = try await AudioAttachment.attach(
+            source(space.root, named: "second.mp3"),
+            to: id,
+            in: space.locations,
+            library: library,
+        )
+
+        let files = try FileManager.default.contentsOfDirectory(
+            atPath: space.locations.audio.path,
+        )
+        #expect(files.count == 1)
+        #expect(files.first?.hasSuffix(".mp3") == true)
+    }
+
     private func imported(
         into library: LibraryRepository,
         content: String = "我在一个山村学校当老师",

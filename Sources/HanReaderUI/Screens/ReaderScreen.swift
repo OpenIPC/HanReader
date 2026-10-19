@@ -112,9 +112,11 @@ struct ReaderScreen: View {
                 // with one in flight loses it. On iOS the app may not be
                 // running again afterwards to write it.
                 guard phase != .active, let model else { return }
+                let pending = pendingPlayhead()
+                let id = textID
                 Task {
                     await model.flushPosition()
-                    await savePlayhead(for: textID)
+                    await write(pending, for: id)
                 }
             }
             // The playhead is written while the reader is using the app, not
@@ -124,7 +126,13 @@ struct ReaderScreen: View {
             // the prototype's bug wearing a different hat.
             .onChange(of: playback.isPlaying) { _, playing in
                 guard !playing else { return }
-                Task { await savePlayhead(for: textID) }
+                // Read now, written later. A task that read the playhead when
+                // it ran could find the shared transport already loaded with
+                // another text's narration, and write that position under
+                // this text's id.
+                let pending = pendingPlayhead()
+                let id = textID
+                Task { await write(pending, for: id) }
             }
             .onChange(of: playback.observedTime) { _, time in
                 // And periodically while playing, so quitting mid-sentence
@@ -135,7 +143,8 @@ struct ReaderScreen: View {
                       abs(time - lastSavedPlayhead) >= Self.playheadSaveInterval
                 else { return }
                 lastSavedPlayhead = time
-                Task { await savePlayhead(for: textID) }
+                let id = textID
+                Task { await write(time, for: id) }
             }
             .onChange(of: speech.isSpeaking) { _, speaking in
                 // Resumed when the utterance ends rather than after a guessed
@@ -320,7 +329,13 @@ extension ReaderScreen {
     /// reader left off.
     private func loadAudio(for model: ReaderModel) async {
         do {
-            guard let track = try await services.library.audioTrack(for: textID) else {
+            let found = try await services.library.audioTrack(for: textID)
+            // The transport is shared across texts, and this is the other
+            // side of an `await`: the reader may have chosen another text
+            // while the lookup was in flight, in which case writing to it
+            // here loads this text's narration under that one's name.
+            guard isStillCurrent(model) else { return }
+            guard let track = found else {
                 hasAudio = false
                 playback.unload()
                 return
@@ -374,31 +389,62 @@ extension ReaderScreen {
     }
 
     private func attachAudio(_ url: URL) async {
+        let target = textID
         do {
             let file = try await AudioAttachment.attach(
                 url,
-                to: textID,
+                to: target,
                 in: services.locations,
                 library: services.library,
             )
+            // A narration starts at its own beginning, so the playhead
+            // stored for whatever was attached before has to go — otherwise
+            // a reader who replaces a recording and leaves finds the new one
+            // resuming at the old one's position, possibly past its end.
+            try? await services.library.clearAudioTime(of: target)
+            guard isStillCurrent() else { return }
+            lastSavedPlayhead = 0
             hasAudio = true
             playback.load(file)
             nowPlaying.attach(to: playback, title: title)
         } catch {
             Log.error("reader", "could not attach audio: \(error)")
+            guard isStillCurrent() else { return }
             hasAudio = true
             playback.fail(error.localizedDescription)
         }
+    }
+
+    /// Whether this screen still owns the shared transport.
+    ///
+    /// `model` is `@State`, so reading it after an `await` gives whichever
+    /// text is open *now* — not the one this call started for.
+    private func isStillCurrent(_ expected: ReaderModel? = nil) -> Bool {
+        guard let current = model else { return false }
+        if let expected, current !== expected {
+            return false
+        }
+        return current.textID == textID
     }
 
     /// Speaks a word, ducking the narration first if the reader asked for
     /// that — which is the default, because the attached audio is usually
     /// the same narration and hearing both is confusing.
     private func speak(_ word: String) {
-        if settings.pausesAudioWhileSpeaking {
-            playback.pauseForSpeech()
+        guard settings.pausesAudioWhileSpeaking else {
+            speech.speak(word, suppressed: voiceOverEnabled)
+            return
         }
+        playback.pauseForSpeech()
         speech.speak(word, suppressed: voiceOverEnabled)
+        // `speak` declines in three ordinary situations — VoiceOver is on,
+        // the word is empty, no Chinese voice is installed — and says so by
+        // never starting. Without this the narration ducks for an utterance
+        // that never happens and stays paused until the reader presses play,
+        // which on a Mac with no Chinese voice is every single tap.
+        if !speech.isSpeaking {
+            playback.resumeAfterSpeech()
+        }
     }
 }
 

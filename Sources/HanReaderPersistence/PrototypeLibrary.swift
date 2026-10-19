@@ -94,7 +94,7 @@ public enum PrototypeLibrary {
         let texts = try await readTexts(from: old)
         let progress = try await readProgress(from: old)
 
-        let run = Migration(repository: repository, locations: locations)
+        var run = Migration(repository: repository, locations: locations)
         var outcome = Outcome()
         let identifiers = try await run.importTexts(texts, into: &outcome)
         try await run.applyProgress(progress, identifiers: identifiers, into: &outcome)
@@ -115,13 +115,14 @@ public enum PrototypeLibrary {
     private static func readTexts(from old: DatabaseQueue) async throws -> [OldText] {
         try await old.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, content, audio_path FROM texts ORDER BY id
+                SELECT id, title, content, audio_path, imported_at FROM texts ORDER BY id
             """).map {
                 OldText(
                     id: $0["id"],
                     title: $0["title"],
                     content: $0["content"],
                     audioPath: $0["audio_path"],
+                    importedAt: $0["imported_at"],
                 )
             }
         }
@@ -151,15 +152,21 @@ private struct Migration {
     let repository: LibraryRepository
     let locations: AppDatabase.Locations
 
+    /// Which old ids this run actually created, as opposed to matched
+    /// against something already in the library. Several steps must act only
+    /// on the former.
+    private var newcomers: [Int64: Bool] = [:]
+
     /// - Returns: old row id to new `TextID`, so the progress rows can find
     ///   the text they belong to.
-    func importTexts(
+    mutating func importTexts(
         _ texts: [OldText],
         into outcome: inout PrototypeLibrary.Outcome,
     ) async throws
         -> [Int64: TextID]
     {
         var identifiers: [Int64: TextID] = [:]
+        newcomers = [:]
         for text in texts {
             guard let title = text.title, let content = text.content, let oldID = text.id else {
                 outcome.notes.append("A text could not be read and was skipped.")
@@ -169,17 +176,26 @@ private struct Migration {
                 title: title,
                 content: content,
                 sourceName: "HanReader (prototype)",
+                now: text.importedAt.map { Date(timeIntervalSince1970: $0) } ?? .now,
             )
+            let isNew: Bool
             switch result {
             case let .imported(id):
                 identifiers[oldID] = id
+                isNew = true
                 outcome.texts += 1
             case let .alreadyPresent(id):
                 identifiers[oldID] = id
+                isNew = false
                 outcome.alreadyPresent += 1
             }
-            if let path = text.audioPath, let id = identifiers[oldID] {
-                try await carryAudio(from: path, for: id, title: title, into: &outcome)
+            newcomers[oldID] = isNew
+            // Only for a text this migration actually created. The same
+            // content already in the library may well have a narration the
+            // reader chose themselves, and replacing it with one from a
+            // previous version of the app is not a migration, it is a loss.
+            if isNew, let path = text.audioPath, let id = identifiers[oldID] {
+                await carryAudio(from: path, for: id, title: title, into: &outcome)
             }
         }
         return identifiers
@@ -199,7 +215,11 @@ private struct Migration {
                 try await repository.reveal(String(word), in: id)
                 outcome.revealedWords += 1
             }
-            if let opened = row.lastOpenedAt {
+            // Only for a text this migration created. A text already in the
+            // library has its own, newer, history — stamping it with a
+            // prototype timestamp moves it backwards in the sidebar and can
+            // change which text opens on launch.
+            if newcomers[oldID] == true, let opened = row.lastOpenedAt {
                 try await repository.markOpened(id, at: Date(timeIntervalSince1970: opened))
             }
         }
@@ -212,7 +232,7 @@ private struct Migration {
         for id: TextID,
         title: String,
         into outcome: inout PrototypeLibrary.Outcome,
-    ) async throws {
+    ) async {
         let original = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: original.path) else {
             // The failure the relative-path rule exists to prevent, met here
@@ -224,23 +244,33 @@ private struct Migration {
                 )
             return
         }
-        try FileManager.default.createDirectory(
-            at: locations.audio,
-            withIntermediateDirectories: true,
-        )
-        let name = "text-\(id.rawValue).\(original.pathExtension.lowercased())"
-        let destination = locations.audio.appendingPathComponent(name)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
+        // Never thrown out of. A file the old container will not let us read
+        // would otherwise abort the whole migration — and because the rename
+        // that marks it done never runs, it would be retried, and fail, on
+        // every launch for ever.
+        do {
+            try FileManager.default.createDirectory(
+                at: locations.audio,
+                withIntermediateDirectories: true,
+            )
+            let name = "text-\(id.rawValue).\(original.pathExtension.lowercased())"
+            let destination = locations.audio.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: original, to: destination)
+            try await repository.attachAudio(AudioTrack(
+                textID: id,
+                relativePath: name,
+                duration: nil,
+                importedAt: Date(),
+            ))
+            outcome.audioTracks += 1
+        } catch {
+            outcome.notes.append(
+                "The audio for \u{201C}\(title)\u{201D} could not be copied across.",
+            )
         }
-        try FileManager.default.copyItem(at: original, to: destination)
-        try await repository.attachAudio(AudioTrack(
-            textID: id,
-            relativePath: name,
-            duration: nil,
-            importedAt: Date(),
-        ))
-        outcome.audioTracks += 1
     }
 }
 
@@ -255,6 +285,10 @@ private struct OldText: Sendable {
     let title: String?
     let content: String?
     let audioPath: String?
+    /// Carried, so a migrated library keeps the order the reader built it
+    /// in. Without it every text is stamped with the moment of migration
+    /// and they all arrive at once.
+    let importedAt: Double?
 }
 
 private struct OldProgress: Sendable {

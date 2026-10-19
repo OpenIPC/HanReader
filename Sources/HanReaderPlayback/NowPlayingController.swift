@@ -66,12 +66,18 @@ public final class NowPlayingController {
         model?.onStateChange = nil
         model = nil
         title = nil
+        // Only the controller that currently owns the lock screen may clear
+        // it. Another window may have claimed it since, and wiping its
+        // Now Playing item on the way out would be this bug in reverse.
+        guard Self.commandTarget === self else { return }
+        Self.commandTarget = nil
         info.nowPlayingInfo = nil
     }
 
     // MARK: - Pushing state out
 
     private func update() {
+        guard Self.commandTarget === self else { return }
         guard let model, model.state == .ready else {
             info.nowPlayingInfo = nil
             return
@@ -92,7 +98,19 @@ public final class NowPlayingController {
 
     // MARK: - Taking commands in
 
+    /// The controller remote commands act on.
+    ///
+    /// `MPRemoteCommandCenter` is process-wide, so registering handlers per
+    /// window meant a lock-screen play reaching *every* open window's
+    /// transport at once. There is only one lock screen and only one Now
+    /// Playing item, so there is only one controller it can sensibly mean:
+    /// the one that most recently claimed it. Weak, so a closed window's
+    /// controller does not keep itself alive as the target of commands it
+    /// can no longer serve.
+    private weak static var commandTarget: NowPlayingController?
+
     private func subscribe() {
+        Self.commandTarget = self
         guard handlers.isEmpty else { return }
         add(commands.playCommand) { $0.play() }
         add(commands.pauseCommand) { $0.pause() }
@@ -107,8 +125,8 @@ public final class NowPlayingController {
         // drag, for the same reason the in-app scrubber commits once.
         let changePosition = commands.changePlaybackPositionCommand
         changePosition.isEnabled = true
-        handlers[changePosition] = changePosition.addTarget { [weak self] event in
-            guard let model = self?.model,
+        handlers[changePosition] = changePosition.addTarget { event in
+            guard let model = Self.commandTarget?.model,
                   let event = event as? MPChangePlaybackPositionCommandEvent
             else { return .commandFailed }
             model.seek(to: event.positionTime)
@@ -125,8 +143,13 @@ public final class NowPlayingController {
 
     private func add(_ command: MPRemoteCommand, _ action: @escaping (PlaybackModel) -> Void) {
         command.isEnabled = true
-        handlers[command] = command.addTarget { [weak self] _ in
-            guard let model = self?.model else { return .noActionableNowPlayingItem }
+        // Routed through the shared target rather than through `self`, so a
+        // command reaches the window that owns the lock screen rather than
+        // every window that ever opened a narrated text.
+        handlers[command] = command.addTarget { _ in
+            guard let model = Self.commandTarget?.model else {
+                return .noActionableNowPlayingItem
+            }
             action(model)
             return .success
         }

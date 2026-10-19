@@ -246,65 +246,6 @@ struct PlaybackModelTests {
         #expect(bench.engine.playCount == 1)
     }
 
-    // MARK: - Interruptions
-
-    @Test("An interruption pauses, and its end resumes")
-    func interruptionResumes() {
-        let bench = fixture()
-        bench.model.play()
-        bench.session.interrupt(.began)
-        #expect(!bench.model.isPlaying)
-        bench.session.interrupt(.ended)
-        #expect(bench.model.isPlaying)
-    }
-
-    /// Audio the reader paused themselves must stay paused: a phone call
-    /// ending is not permission to start something they stopped.
-    @Test("An interruption does not resume audio the reader paused")
-    func deliberatePauseIsNotResumed() {
-        let bench = fixture()
-        bench.model.play()
-        bench.model.pause()
-        bench.session.interrupt(.began)
-        bench.session.interrupt(.ended)
-        #expect(!bench.model.isPlaying)
-    }
-
-    /// Unplugging headphones must not play the reader's audio out loud to
-    /// the room — and plugging them back in must not start it either.
-    @Test("Losing the output pauses, and does not resume")
-    func outputGoneDoesNotResume() {
-        let bench = fixture()
-        bench.model.play()
-        bench.session.interrupt(.outputGone)
-        #expect(!bench.model.isPlaying)
-        bench.session.interrupt(.ended)
-        #expect(!bench.model.isPlaying)
-    }
-
-    // MARK: - Speech
-
-    /// The attached audio is usually the same narration, so hearing the
-    /// spoken word over it is confusing rather than merely noisy.
-    @Test("Speaking pauses the narration and resumes it after")
-    func speechDucksPlayback() {
-        let bench = fixture()
-        bench.model.play()
-        bench.model.pauseForSpeech()
-        #expect(!bench.model.isPlaying)
-        bench.model.resumeAfterSpeech()
-        #expect(bench.model.isPlaying)
-    }
-
-    @Test("Speaking over paused audio leaves it paused")
-    func speechDoesNotStartPausedAudio() {
-        let bench = fixture()
-        bench.model.pauseForSpeech()
-        bench.model.resumeAfterSpeech()
-        #expect(!bench.model.isPlaying)
-        #expect(bench.engine.playCount == 0)
-    }
-
     // MARK: - Transport basics
 
     @Test("Loading parks the playhead where the reader left it")
@@ -433,5 +374,144 @@ struct PlaybackRateTests {
     func ordering() {
         let rates = PlaybackRate.allCases.map(\.rawValue)
         #expect(rates == rates.sorted())
+    }
+}
+
+/// Everything about who is allowed to resume narration, and when.
+///
+/// Its own suite because the rules are not obvious and there are several:
+/// the system may take the audio away and give it back, a spoken word may
+/// duck it, and the reader may simply have pressed pause — and only one of
+/// those three is allowed to undo each of the others.
+@MainActor
+@Suite("Playback interruptions")
+struct PlaybackInterruptionTests {
+    @Test("An interruption pauses, and its end resumes")
+    func interruptionResumes() {
+        let bench = fixture()
+        bench.model.play()
+        bench.session.interrupt(.began)
+        #expect(!bench.model.isPlaying)
+        bench.session.interrupt(.ended)
+        #expect(bench.model.isPlaying)
+    }
+
+    /// Audio the reader paused themselves must stay paused: a phone call
+    /// ending is not permission to start something they stopped.
+    @Test("An interruption does not resume audio the reader paused")
+    func deliberatePauseIsNotResumed() {
+        let bench = fixture()
+        bench.model.play()
+        bench.model.pause()
+        bench.session.interrupt(.began)
+        bench.session.interrupt(.ended)
+        #expect(!bench.model.isPlaying)
+    }
+
+    /// Unplugging headphones must not play the reader's audio out loud to
+    /// the room — and plugging them back in must not start it either.
+    @Test("Losing the output pauses, and does not resume")
+    func outputGoneDoesNotResume() {
+        let bench = fixture()
+        bench.model.play()
+        bench.session.interrupt(.outputGone)
+        #expect(!bench.model.isPlaying)
+        bench.session.interrupt(.ended)
+        #expect(!bench.model.isPlaying)
+    }
+
+    /// Review finding: the output can be lost while already paused by an
+    /// interruption, and `.outputGone` returned early without clearing the
+    /// interruption's claim — so the interruption ending resumed narration
+    /// into a room with no headphones in it.
+    @Test("Losing the output while interrupted cancels the resume")
+    func outputLostDuringInterruption() {
+        let bench = fixture()
+        bench.model.play()
+        bench.session.interrupt(.began)
+        #expect(!bench.model.isPlaying)
+
+        bench.session.interrupt(.outputGone)
+        bench.session.interrupt(.ended)
+        #expect(!bench.model.isPlaying)
+    }
+
+    /// Review finding: an interruption the system never invites us back from
+    /// leaves its claim standing. With one shared flag, the next word the
+    /// reader tapped ended by resuming narration the system had taken away.
+    @Test("A word spoken after an unresumed interruption does not start the narration")
+    func speechDoesNotResumeAnInterruption() {
+        let bench = fixture()
+        bench.model.play()
+        // `.began` with no matching `.ended` — a call that was answered.
+        bench.session.interrupt(.began)
+        #expect(!bench.model.isPlaying)
+
+        // The reader taps a word. Nothing is playing, so there is nothing to
+        // duck, and the utterance ending must not start the narration.
+        bench.model.pauseForSpeech()
+        bench.model.resumeAfterSpeech()
+        #expect(!bench.model.isPlaying)
+    }
+
+    /// And the converse: ducking for a word must not be undone by a system
+    /// interruption ending.
+    @Test("An interruption ending does not resume audio ducked for a word")
+    func interruptionDoesNotResumeSpeechDucking() {
+        let bench = fixture()
+        bench.model.play()
+        bench.model.pauseForSpeech()
+        bench.session.interrupt(.ended)
+        #expect(!bench.model.isPlaying)
+        // The word finishing is what resumes it.
+        bench.model.resumeAfterSpeech()
+        #expect(bench.model.isPlaying)
+    }
+
+    /// Review finding: a narration replaced by a shorter file left the
+    /// parked slider past its own end, and told a lock screen an elapsed
+    /// time longer than the track.
+    @Test("A position past a newly-known duration is pulled back to it")
+    func parkedPositionIsClampedWhenDurationArrives() {
+        let engine = SpyEngine()
+        let model = PlaybackModel(engine: engine, session: SpySession())
+        model.load(URL(fileURLWithPath: "/tmp/short.m4a"), startingAt: 300)
+        #expect(model.playhead == 300)
+
+        engine.declareDuration(45)
+        #expect(model.playhead == 45)
+        #expect(model.observedTime == 45)
+    }
+
+    @Test("A position inside the duration is left alone")
+    func validParkedPositionSurvives() {
+        let engine = SpyEngine()
+        let model = PlaybackModel(engine: engine, session: SpySession())
+        model.load(URL(fileURLWithPath: "/tmp/long.m4a"), startingAt: 30)
+        engine.declareDuration(300)
+        #expect(model.playhead == 30)
+    }
+
+    // MARK: - Speech
+
+    /// The attached audio is usually the same narration, so hearing the
+    /// spoken word over it is confusing rather than merely noisy.
+    @Test("Speaking pauses the narration and resumes it after")
+    func speechDucksPlayback() {
+        let bench = fixture()
+        bench.model.play()
+        bench.model.pauseForSpeech()
+        #expect(!bench.model.isPlaying)
+        bench.model.resumeAfterSpeech()
+        #expect(bench.model.isPlaying)
+    }
+
+    @Test("Speaking over paused audio leaves it paused")
+    func speechDoesNotStartPausedAudio() {
+        let bench = fixture()
+        bench.model.pauseForSpeech()
+        bench.model.resumeAfterSpeech()
+        #expect(!bench.model.isPlaying)
+        #expect(bench.engine.playCount == 0)
     }
 }

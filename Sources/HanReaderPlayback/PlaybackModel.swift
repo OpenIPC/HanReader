@@ -93,7 +93,16 @@ public final class PlaybackModel {
     /// True when playback was stopped by something other than the reader —
     /// a phone call, headphones unplugged, a word being spoken — so it can be
     /// resumed without resuming audio the reader had deliberately paused.
-    @ObservationIgnored private var wasInterrupted = false
+    /// Paused so a tapped word could be heard over it.
+    ///
+    /// Two flags rather than one, and that separation is the fix for a real
+    /// confusion: a system interruption that never invites us back leaves its
+    /// flag set, and with one shared flag the next word the reader tapped
+    /// would end by resuming narration the system had taken away.
+    @ObservationIgnored private var pausedForSpeech = false
+
+    /// Paused by the system — a call, an alarm, another app.
+    @ObservationIgnored private var pausedByInterruption = false
 
     @ObservationIgnored private let engine: any AudioEngine
     @ObservationIgnored private let session: any PlaybackSession
@@ -113,6 +122,14 @@ public final class PlaybackModel {
         engine.onDuration = { [weak self] seconds in
             guard let self else { return }
             duration = seconds
+            // A parked position is clamped once the length is known. A
+            // narration replaced by a shorter file would otherwise show a
+            // slider past its own end, and tell a lock screen an elapsed
+            // time longer than the track.
+            if playhead > seconds {
+                playhead = seconds
+                observedTime = seconds
+            }
             onStateChange?()
         }
         engine.onFinish = { [weak self] in self?.finish() }
@@ -133,7 +150,7 @@ public final class PlaybackModel {
         state = .ready
         duration = engine.duration
         isPlaying = false
-        wasInterrupted = false
+        clearPauseReasons()
         scrubTime = nil
         let start = max(0, time ?? 0)
         playhead = start
@@ -155,7 +172,7 @@ public final class PlaybackModel {
         observedTime = 0
         playhead = 0
         scrubTime = nil
-        wasInterrupted = false
+        clearPauseReasons()
         deactivateSession()
         onStateChange?()
     }
@@ -181,7 +198,7 @@ public final class PlaybackModel {
         }
         engine.play()
         isPlaying = true
-        wasInterrupted = false
+        clearPauseReasons()
         onStateChange?()
     }
 
@@ -189,7 +206,9 @@ public final class PlaybackModel {
         guard isPlaying else { return }
         engine.pause()
         isPlaying = false
-        wasInterrupted = false
+        // Deliberate, so neither the system nor a finished utterance may
+        // start it again on the reader's behalf.
+        clearPauseReasons()
         onStateChange?()
     }
 
@@ -253,15 +272,16 @@ public final class PlaybackModel {
         guard isPlaying else { return }
         engine.pause()
         isPlaying = false
-        wasInterrupted = true
+        pausedForSpeech = true
         onStateChange?()
     }
 
+    /// Resumes only narration that *this* paused for a word.
     public func resumeAfterSpeech() {
-        guard wasInterrupted, state == .ready else { return }
+        guard pausedForSpeech, state == .ready else { return }
+        pausedForSpeech = false
         engine.play()
         isPlaying = true
-        wasInterrupted = false
         onStateChange?()
     }
 
@@ -271,20 +291,29 @@ public final class PlaybackModel {
             guard isPlaying else { return }
             engine.pause()
             isPlaying = false
-            wasInterrupted = true
+            pausedByInterruption = true
             onStateChange?()
         case .ended:
-            resumeAfterSpeech()
+            guard pausedByInterruption, state == .ready else { return }
+            pausedByInterruption = false
+            engine.play()
+            isPlaying = true
+            onStateChange?()
         case .outputGone:
             // Headphones pulled out. Pausing is not politeness, it is the
             // difference between a quiet room and the reader's audio playing
             // through the speaker to everyone around them — and it must not
             // be resumable automatically, or plugging back in starts it in
             // the open.
+            //
+            // The reasons are cleared *before* the guard, not after it: the
+            // output can be lost while already paused by an interruption,
+            // and leaving that reason set means the interruption ending
+            // resumes narration into a room with no headphones in it.
+            clearPauseReasons()
             guard isPlaying else { return }
             engine.pause()
             isPlaying = false
-            wasInterrupted = false
             onStateChange?()
         }
     }
@@ -306,7 +335,7 @@ public final class PlaybackModel {
     private func finish() {
         engine.pause()
         isPlaying = false
-        wasInterrupted = false
+        clearPauseReasons()
         if duration > 0 {
             playhead = duration
             observedTime = duration
@@ -331,6 +360,11 @@ public final class PlaybackModel {
         guard hasActivatedSession else { return }
         session.deactivate()
         hasActivatedSession = false
+    }
+
+    private func clearPauseReasons() {
+        pausedForSpeech = false
+        pausedByInterruption = false
     }
 
     private func clamp(_ time: Double) -> Double {
