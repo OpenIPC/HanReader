@@ -20,7 +20,13 @@ public struct LibraryRepository: Sendable {
         case alreadyPresent(TextID)
     }
 
-    private let dbQueue: DatabaseQueue
+    /// Internal rather than private because this type's implementation spans
+    /// files: `private` in Swift reaches extensions in the *same* file only,
+    /// so splitting the listening methods out would otherwise be impossible.
+    /// GRDB still cannot leak past this module — `internal import GRDB` and
+    /// the SwiftLint boundary rule see to that, which is the guarantee that
+    /// actually matters.
+    let dbQueue: DatabaseQueue
 
     /// Where attached audio lives. Needed so that deleting a text can remove
     /// its audio file, not merely the row pointing at it.

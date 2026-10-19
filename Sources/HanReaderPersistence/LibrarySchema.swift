@@ -38,6 +38,11 @@ enum LibrarySchema {
             try createDictionaryPreferenceTable(db)
         }
 
+        migrator.registerMigration("v3_listening_practice") { db in
+            try createPhraseTable(db)
+            try createDictationAttemptTable(db)
+        }
+
         return migrator
     }
 
@@ -157,6 +162,67 @@ enum LibrarySchema {
             table.column("word", .text).notNull()
             table.column("revealedAt", .datetime).notNull()
             table.primaryKey(["textId", "word"])
+        }
+    }
+
+    // MARK: - v3: listening and dictation
+
+    /// One practice unit: a span of the text and the span of audio that says
+    /// it.
+    ///
+    /// Derived data — it can always be computed again from the text and the
+    /// recording — but not *cheaply*: the audio has to be run through speech
+    /// recognition to produce it, which costs seconds and a model download.
+    /// Storing it is the difference between opening a text and waiting for
+    /// one.
+    ///
+    /// Keyed on `(textId, idx)` rather than carrying an id of its own.
+    /// Phrases have no identity apart from their position in their text, and
+    /// re-aligning a recording replaces the lot.
+    private static func createPhraseTable(_ db: Database) throws {
+        try db.create(table: "phrase") { table in
+            table.column("textId", .integer)
+                .notNull()
+                .references("text", onDelete: .cascade)
+            table.column("idx", .integer).notNull()
+            // Seconds into the recording.
+            table.column("startTime", .double).notNull()
+            table.column("endTime", .double).notNull()
+            // UTF-16 offsets into `text.content`, the same unit as
+            // `readingPosition.characterOffset` and `Token.range`.
+            table.column("textStart", .integer).notNull()
+            table.column("textEnd", .integer).notNull()
+            // How much of this phrase the recogniser actually matched, as
+            // against bridged across its own mistakes. Low values are what
+            // the UI offers for review rather than silently trusting.
+            table.column("confidence", .double).notNull()
+            // 'recognised' or 'manual'. A boundary the reader dragged must
+            // survive a re-alignment of everything around it, so the two are
+            // distinguishable.
+            table.column("origin", .text).notNull()
+            // NULL until the reader says. A replay filter, not a schedule:
+            // this is deliberately not an SRS.
+            table.column("grade", .text)
+            table.primaryKey(["textId", "idx"])
+        }
+    }
+
+    /// The last attempt at one phrase.
+    ///
+    /// The latest rather than a history, and a count beside it. A history is
+    /// a reporting feature nobody asked for; what a learner wants to know is
+    /// whether they have it *now*.
+    private static func createDictationAttemptTable(_ db: Database) throws {
+        try db.create(table: "dictationAttempt") { table in
+            table.column("textId", .integer)
+                .notNull()
+                .references("text", onDelete: .cascade)
+            table.column("idx", .integer).notNull()
+            table.column("typed", .text).notNull()
+            table.column("accuracy", .double).notNull()
+            table.column("attempts", .integer).notNull()
+            table.column("updatedAt", .datetime).notNull()
+            table.primaryKey(["textId", "idx"])
         }
     }
 
