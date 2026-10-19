@@ -61,6 +61,35 @@ struct PhraseSplitterTests {
         #expect(result.allSatisfy { $0.count > 1 })
     }
 
+    /// Review finding: 真的吗？！ is one question with an exclamation on it.
+    /// Ending the sentence at ？ left ！ to start the next one, so the reader
+    /// would be asked to transcribe a phrase consisting of a punctuation
+    /// mark.
+    @Test("Repeated terminators stay with the sentence they end")
+    func repeatedTerminators() {
+        // With the minimum switched off, so the boundary itself is what is
+        // being tested. At the default minimum the stray ！ would be glued
+        // back on by the merge and a wrong sentence boundary would look
+        // right from the outside.
+        #expect(phrases("真的吗？！接下来我们继续。", minimum: 0) == ["真的吗？！", "接下来我们继续。"])
+        #expect(phrases("是吗?!我们继续下去。", minimum: 0) == ["是吗?!", "我们继续下去。"])
+        // And the merge still covers it at the default, which is what a
+        // reader actually sees.
+        #expect(phrases("真的吗？！接下来我们继续。") == ["真的吗？！", "接下来我们继续。"])
+    }
+
+    /// Review finding: dividing an over-long sentence ended a clause at its
+    /// terminator and left the closing quote as another. With the clause
+    /// before it already over budget, neither packing nor the minimum-length
+    /// merge would take it back.
+    @Test("A closing mark never becomes a phrase of its own")
+    func punctuationIsNeverAPhraseAlone() {
+        let source = "他大声地说道这件事情非常重要我们一定要认真对待它？”"
+        for phrase in phrases(source, maximum: 8, minimum: 4) {
+            #expect(PhraseSplitter.characterCount(of: phrase, in: 0 ..< phrase.utf16.count) > 0)
+        }
+    }
+
     @Test("A final sentence with no terminator is still a phrase")
     func unterminatedTail() {
         #expect(phrases("第一句。没有句号的结尾") == ["第一句。", "没有句号的结尾"])

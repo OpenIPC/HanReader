@@ -11,29 +11,75 @@ public import HanReaderCore
 /// concern, arriving whole in M11, and the repository's own body is long
 /// enough already.
 extension LibraryRepository {
-    /// Replaces a text's phrases wholesale.
+    /// Replaces a text's phrases, keeping what a person decided.
     ///
     /// All or nothing, in one transaction. Phrases are positional: a half-
     /// written set is not a shorter set, it is a set whose indices no longer
     /// mean what the attempts recorded against them mean.
     ///
-    /// Attempts are deliberately **not** cleared. Re-aligning a recording
-    /// usually moves boundaries by fractions of a second, and throwing away
-    /// the reader's record of what they have already mastered would make
-    /// fixing one boundary cost them the whole text.
+    /// Two things survive a replacement, and both are matched by **text
+    /// range** rather than by index, because re-aligning can insert, drop or
+    /// reorder phrases and an index means nothing across that:
+    ///
+    /// - **A boundary somebody dragged.** `movePhrase` marks it `manual`
+    ///   precisely so a later re-alignment can leave it alone; without this
+    ///   the recogniser would overwrite the correction on its next run and
+    ///   the reader would fix the same boundary for ever.
+    /// - **An attempt**, but only where the phrase still covers the same
+    ///   text. Keeping it by index would hand an earlier answer and score to
+    ///   whatever phrase happened to land on that index — marking a phrase
+    ///   the reader has never seen as already passed.
     public func savePhrases(_ phrases: [Phrase], for id: TextID) async throws {
         try await dbQueue.write { db in
+            let existing = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT idx, startTime, endTime, textStart, textEnd, origin FROM phrase
+                    WHERE textId = ?
+                """,
+                arguments: [id.rawValue],
+            )
+
+            // Old text range -> the times a person set for it.
+            var corrected: [Range<Int>: (start: Double, end: Double)] = [:]
+            // Old index -> the text range it covered.
+            var previousRanges: [Int: Range<Int>] = [:]
+            for row in existing {
+                let range = (row["textStart"] as Int) ..< (row["textEnd"] as Int)
+                previousRanges[row["idx"] as Int] = range
+                if row["origin"] as String? == PhraseOrigin.manual.rawValue {
+                    corrected[range] = (row["startTime"], row["endTime"])
+                }
+            }
+
             try db.execute(sql: "DELETE FROM phrase WHERE textId = ?", arguments: [id.rawValue])
+            var kept: Set<Int> = []
+            for phrase in phrases where previousRanges[phrase.index] == phrase.textRange {
+                kept.insert(phrase.index)
+            }
+            // Everything else is an answer to a question that no longer
+            // exists.
+            try db.execute(sql: """
+                DELETE FROM dictationAttempt
+                WHERE textId = ? AND idx NOT IN (\(kept.map(\.description).joined(separator: ",")))
+            """, arguments: [id.rawValue])
+
             for phrase in phrases {
+                // A boundary a person set for this very text wins over the
+                // one being offered.
+                let fixed = corrected[phrase.textRange]
                 try db.execute(sql: """
                     INSERT INTO phrase
                         (textId, idx, startTime, endTime, textStart, textEnd,
                          confidence, origin, grade)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
-                    id.rawValue, phrase.index, phrase.start, phrase.end,
+                    id.rawValue, phrase.index,
+                    fixed?.start ?? phrase.start, fixed?.end ?? phrase.end,
                     phrase.textRange.lowerBound, phrase.textRange.upperBound,
-                    phrase.confidence, phrase.origin.rawValue, phrase.grade?.rawValue,
+                    phrase.confidence,
+                    (fixed == nil ? phrase.origin : .manual).rawValue,
+                    phrase.grade?.rawValue,
                 ])
             }
         }

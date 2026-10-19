@@ -70,14 +70,62 @@ struct DictationComparisonTests {
         #expect(result.marks.count == 5)
     }
 
-    /// Nothing to get wrong. Dividing by zero to say otherwise would be
-    /// arithmetic masquerading as judgement.
-    @Test("An empty phrase scores one rather than dividing by zero")
+    /// Nothing expected and nothing typed is a phrase with nothing to get
+    /// wrong. Nothing expected but something typed is simply wrong, and
+    /// saying so beats dividing by zero and calling it full marks.
+    @Test("An empty phrase scores one, but not if something was typed into it")
     func emptyPhrase() {
         let result = check("", "")
         #expect(result.accuracy == 1)
         #expect(result.isPerfect)
-        #expect(check("多余", "").accuracy == 1)
+        #expect(check("多余", "").accuracy == 0)
+    }
+
+    /// Review finding: dividing matches by the *expected* length alone left
+    /// invented characters free. Typing the phrase correctly and then adding
+    /// nonsense scored one, and passed.
+    @Test("Invented characters bring the score down")
+    func extrasAreScored() {
+        let perfect = check("山村的孩子", "山村的孩子")
+        #expect(perfect.accuracy == 1)
+
+        let padded = check("山村的孩子猫狗猫", "山村的孩子")
+        #expect(padded.count(of: .extra) == 3)
+        #expect(padded.accuracy < 1)
+        // Five right out of five expected plus three invented.
+        #expect(abs(padded.accuracy - 5.0 / 8.0) < 0.000_1)
+        #expect(!padded.isPerfect)
+    }
+
+    /// Review finding: the passing contract says a homophone is acceptable
+    /// because the learner heard the phrase, but the strict score counts
+    /// only exact matches — so such an attempt could never reach the default
+    /// threshold. Two scores, and the one that gates drilling is the one
+    /// that measures listening.
+    @Test("A homophone slip is heard, even though it is not correct")
+    func listeningAccuracyForgivesHomophones() {
+        // 真 for 针: both zhen1.
+        let result = check("真是", "针是")
+        #expect(result.accuracy == 0.5)
+        #expect(result.listeningAccuracy == 1)
+        #expect(!result.isPerfect)
+    }
+
+    /// But a tone slip is not forgiven. Tones are what an ear loses first,
+    /// and they are what this exercise is most useful for.
+    @Test("A tone slip is not counted as heard")
+    func listeningAccuracyKeepsToneSlips() {
+        // 是 shi4 for 时 shi2.
+        let result = check("是重", "时重")
+        #expect(result.accuracy == 0.5)
+        #expect(result.listeningAccuracy == 0.5)
+    }
+
+    @Test("Invented characters count against the listening score too")
+    func listeningAccuracyScoresExtras() {
+        let result = check("针猫狗", "针")
+        #expect(result.listeningAccuracy < 1)
+        #expect(result.scale == 3)
     }
 
     @Test("Accuracy counts matched characters over expected characters")

@@ -94,8 +94,30 @@ public enum SequenceAlignment {
         }
 
         let band = Band(rows: reference.count, columns: candidate.count, slack: slack)
+        guard !band.exceedsBudget
+        else { return trivial(reference: reference, candidate: candidate) }
         let moves = fill(reference: reference, candidate: candidate, band: band)
         return backtrace(moves: moves, band: band)
+    }
+
+    /// Nothing matched: every reference element missing, every candidate
+    /// element invented.
+    ///
+    /// A real alignment of two sequences this mismatched would say very
+    /// nearly this anyway, so it is the shape of the answer rather than a
+    /// refusal to answer. Forced alignment reads the resulting confidence of
+    /// zero and falls back to asking the reader.
+    private static func trivial(
+        reference: [Character],
+        candidate: [Character],
+    )
+        -> [AlignmentStep]
+    {
+        reference.indices.map {
+            AlignmentStep(operation: .delete, reference: $0, candidate: nil)
+        } + candidate.indices.map {
+            AlignmentStep(operation: .insert, reference: nil, candidate: $0)
+        }
     }
 
     /// The band around the diagonal that is worth computing, and the
@@ -117,9 +139,48 @@ public enum SequenceAlignment {
             // The `abs` term is load-bearing, not padding: without it a row
             // past the end of the shorter sequence would have a lower bound
             // above its upper bound, and forming that range traps.
+            //
+            // It is also what makes the band dangerous, which is the point
+            // of the clamp below. Speech recognition that gave up on a long
+            // recording produces exactly the degenerate shape — thousands of
+            // transcript characters against a handful of recognised ones —
+            // and the band would then be as wide as the transcript, turning
+            // this from O(n × band) back into O(n²). On a book that is
+            // hundreds of megabytes for an alignment whose answer is "almost
+            // all of it is missing".
             band = max(1, abs(rows - columns) + max(0, slack))
             width = 2 * band + 1
         }
+
+        /// Whether computing this band would cost more memory than the
+        /// answer is worth.
+        ///
+        /// The band cannot simply be clamped: it has to be at least the
+        /// difference in length or a row past the end of the shorter
+        /// sequence has a lower bound above its upper bound, and the path
+        /// from one corner to the other no longer fits inside it. So the
+        /// choice is to spend the memory or to decline, and for a pair this
+        /// mismatched there is no good alignment to find — the honest answer
+        /// is that almost none of it lines up, which is what the trivial
+        /// alignment says for nothing.
+        var exceedsBudget: Bool {
+            band > Self.maximumBand || cellCount > Self.maximumCells
+        }
+
+        /// One byte a cell, since only the moves are kept. 64 MB is far
+        /// more than any real alignment needs — a two-minute exercise uses a
+        /// ten-thousandth of it, and an hour-long chapter against its own
+        /// transcript about a hundredth.
+        static let maximumCells = 64_000_000
+
+        /// And a width beyond which the two sequences are not variants of
+        /// each other at all.
+        ///
+        /// The band has to span the difference in length, so a band this
+        /// wide means thousands of characters appear on one side and not the
+        /// other — speech recognition that gave up, not a transcript with
+        /// mistakes in it.
+        static let maximumBand = 4096
 
         func lowerBound(_ row: Int) -> Int {
             max(0, row - band)
@@ -139,7 +200,14 @@ public enum SequenceAlignment {
         }
     }
 
-    /// Fills the cost matrix, keeping only the move that produced each cell.
+    /// Fills the matrix, keeping only the move that produced each cell.
+    ///
+    /// Costs are kept for **two rows**, not the whole matrix: a cell depends
+    /// only on the row above it and the cell to its left, so the rest is
+    /// dead weight. Only the moves have to survive, and a move is one byte —
+    /// so the backtrace costs a fifth of what holding the costs as well
+    /// would, and an audiobook chapter against its own transcript fits in
+    /// single-digit megabytes.
     private static func fill(
         reference: [Character],
         candidate: [Character],
@@ -148,39 +216,57 @@ public enum SequenceAlignment {
         -> [UInt8]
     {
         let unreachable = Int32.max / 4
-        // Flat arrays rather than nested ones: this is the hot loop, and a
-        // `[[Int32]]` is a row of pointers to heap allocations.
-        var costs = [Int32](repeating: unreachable, count: band.cellCount)
         var moves = [UInt8](repeating: 0, count: band.cellCount)
-
-        func cost(_ row: Int, _ column: Int) -> Int32 {
-            guard row >= 0, column >= 0, let index = band.slot(row, column) else {
-                return unreachable
-            }
-            return costs[index]
-        }
+        var previous = [Int32](repeating: unreachable, count: band.width)
+        var current = [Int32](repeating: unreachable, count: band.width)
 
         for row in 0 ... band.rows {
-            for column in band.lowerBound(row) ... band.upperBound(row) {
-                guard let index = band.slot(row, column) else { continue }
+            let lower = band.lowerBound(row)
+            let upper = band.upperBound(row)
+            let previousLower = row > 0 ? band.lowerBound(row - 1) : 0
+            let previousUpper = row > 0 ? band.upperBound(row - 1) : -1
+
+            // No clearing between rows. Every offset this row reads is one
+            // it has already written: the loop writes `lower ... upper` in
+            // order, and `left` only looks at columns before the current
+            // one. A reset would be a wide array cleared per row for cells
+            // nothing looks at.
+            for column in lower ... upper {
+                let offset = column - lower
                 if row == 0, column == 0 {
-                    costs[index] = 0
+                    current[offset] = 0
                     continue
                 }
+                // The row above, where it exists and reaches this column.
+                func above(_ target: Int) -> Int32 {
+                    guard row > 0, target >= previousLower, target <= previousUpper else {
+                        return unreachable
+                    }
+                    return previous[target - previousLower]
+                }
+                // The cell to the left, which this loop has already written.
+                func left(_ target: Int) -> Int32 {
+                    guard target >= lower, target < column else { return unreachable }
+                    return current[target - lower]
+                }
+
                 let same = row > 0 && column > 0 && reference[row - 1] == candidate[column - 1]
-                var best = cost(row - 1, column - 1) + (same ? 0 : 1)
+                var best = above(column - 1) + (same ? 0 : 1)
                 var move = same ? AlignmentOperation.match : .substitute
-                if cost(row - 1, column) + 1 < best {
-                    best = cost(row - 1, column) + 1
+                if above(column) + 1 < best {
+                    best = above(column) + 1
                     move = .delete
                 }
-                if cost(row, column - 1) + 1 < best {
-                    best = cost(row, column - 1) + 1
+                if left(column - 1) + 1 < best {
+                    best = left(column - 1) + 1
                     move = .insert
                 }
-                costs[index] = best
-                moves[index] = move.rawValue
+                current[offset] = best
+                if let slot = band.slot(row, column) {
+                    moves[slot] = move.rawValue
+                }
             }
+            swap(&previous, &current)
         }
         return moves
     }

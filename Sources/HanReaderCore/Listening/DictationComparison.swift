@@ -70,9 +70,9 @@ public struct DictationMark: Hashable, Sendable {
 /// A checked dictation attempt.
 public struct DictationResult: Hashable, Sendable {
     public let marks: [DictationMark]
-    /// Characters of the transcript that were typed correctly.
+    /// Characters of the transcript typed exactly right.
     public let correct: Int
-    /// Characters the transcript expected — the denominator.
+    /// Characters the transcript expected.
     public let expected: Int
 
     public init(marks: [DictationMark], correct: Int, expected: Int) {
@@ -81,11 +81,46 @@ public struct DictationResult: Hashable, Sendable {
         self.expected = expected
     }
 
-    /// Zero to one. An empty phrase scores one: there was nothing to get
-    /// wrong, and dividing by zero to say otherwise would be arithmetic
-    /// masquerading as judgement.
+    /// Characters invented, which are errors with no place in the
+    /// transcript to hang them on.
+    public var extras: Int {
+        count(of: .extra)
+    }
+
+    /// Everything that could be got wrong: the transcript's characters, plus
+    /// anything added that was not in it.
+    ///
+    /// Invented characters are in the denominator because otherwise they are
+    /// free. Typing the phrase correctly and then adding three characters of
+    /// nonsense would score one, and pass.
+    public var scale: Int {
+        expected + extras
+    }
+
+    /// How much of the phrase was transcribed exactly, from zero to one.
     public var accuracy: Double {
-        expected == 0 ? 1 : Double(correct) / Double(expected)
+        fraction(correct)
+    }
+
+    /// How much of the phrase was **heard**, counting a homophone as heard.
+    ///
+    /// The exercise measures listening, and 真 typed for 针 is not a
+    /// listening mistake: both are `zhen1`, so they heard it exactly right
+    /// and their input method offered the wrong candidate. Sending them back
+    /// to re-listen teaches nothing about listening.
+    ///
+    /// A tone slip is **not** counted as heard. Tones are what an ear loses
+    /// first, and they are the thing this exercise is most useful for.
+    public var listeningAccuracy: Double {
+        fraction(correct + count(of: .homophone))
+    }
+
+    private func fraction(_ hits: Int) -> Double {
+        // Nothing expected and nothing typed is a phrase with nothing to get
+        // wrong. Nothing expected but something typed is simply wrong, and
+        // saying so beats dividing by zero and calling it full marks.
+        guard scale > 0 else { return 1 }
+        return Double(hits) / Double(scale)
     }
 
     public var isPerfect: Bool {

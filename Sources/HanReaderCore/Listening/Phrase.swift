@@ -113,9 +113,13 @@ public struct DictationAttempt: Hashable, Sendable {
 
     /// Whether this attempt is good enough to stop drilling the phrase.
     ///
-    /// Not a perfect score: a learner who typed every character correctly but
-    /// chose one wrong homophone heard the phrase, and being sent back to it
-    /// for an input-method slip teaches nothing about listening.
+    /// The stored `accuracy` is `DictationResult.listeningAccuracy`, not the
+    /// strict one, which is the whole point: a learner who typed every
+    /// character correctly except for one wrong homophone *heard* the
+    /// phrase, and being sent back to it for an input-method slip teaches
+    /// nothing about listening. A strict score could never reach the default
+    /// threshold in that case, so this used to promise something it could
+    /// not deliver.
     public func isPassing(threshold: Double = 1) -> Bool {
         accuracy >= threshold
     }

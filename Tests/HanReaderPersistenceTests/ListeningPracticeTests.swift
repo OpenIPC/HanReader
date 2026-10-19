@@ -68,7 +68,7 @@ struct ListeningPracticeTests {
     /// Re-aligning a recording usually moves boundaries by fractions of a
     /// second. Throwing away what the reader has already mastered would make
     /// fixing one boundary cost them the whole text.
-    @Test("Re-aligning keeps the reader's attempts")
+    @Test("Re-aligning keeps attempts whose phrase still covers the same text")
     func realigningKeepsAttempts() async throws {
         let library = try library()
         let id = try await text(in: library)
@@ -77,6 +77,76 @@ struct ListeningPracticeTests {
 
         try await library.savePhrases([phrase(0, 0, 4.2)], for: id)
         #expect(try await library.attempts(for: id)[0]?.accuracy == 1)
+    }
+
+    /// Review finding: attempts are keyed by index and phrases are
+    /// positional, so re-aligning into a different number of phrases handed
+    /// an earlier answer to whatever landed on that index — marking a phrase
+    /// the reader has never seen as already passed.
+    @Test("Re-aligning drops attempts whose phrase no longer covers that text")
+    func realigningDropsStaleAttempts() async throws {
+        let library = try library()
+        let id = try await text(in: library)
+        try await library.savePhrases([phrase(0, 0, 4), phrase(1, 4, 9)], for: id)
+        try await library.recordAttempt("第一句", accuracy: 1, at: 0, in: id)
+        try await library.recordAttempt("第二句", accuracy: 1, at: 1, in: id)
+
+        // A re-alignment that split the first phrase in two: index 1 now
+        // covers different words entirely.
+        let resplit = [
+            Phrase(index: 0, start: 0, end: 2, textRange: 0 ..< 9),
+            Phrase(index: 1, start: 2, end: 4, textRange: 9 ..< 14),
+            Phrase(index: 2, start: 4, end: 9, textRange: 10 ..< 19),
+        ]
+        try await library.savePhrases(resplit, for: id)
+
+        let attempts = try await library.attempts(for: id)
+        // Index 0 still covers 0..<9, so its answer still means something.
+        #expect(attempts[0]?.typed == "第一句")
+        // Index 1 covers different words now, so its answer is gone.
+        #expect(attempts[1] == nil)
+        #expect(attempts[2] == nil)
+    }
+
+    /// Review finding: `movePhrase` marks a boundary `manual` precisely so a
+    /// later re-alignment can leave it alone — but saving replaced it with
+    /// the recogniser's, so the reader would fix the same boundary for ever.
+    @Test("Re-aligning keeps a boundary somebody dragged")
+    func realigningKeepsManualBoundaries() async throws {
+        let library = try library()
+        let id = try await text(in: library)
+        try await library.savePhrases([phrase(0, 0, 4), phrase(1, 4, 9)], for: id)
+        try await library.movePhrase(0, in: id, start: 0.4, end: 3.6)
+
+        // The recogniser runs again and offers its own times for the same
+        // words.
+        try await library.savePhrases([phrase(0, 0, 4), phrase(1, 4, 9)], for: id)
+
+        let stored = try await library.phrases(for: id)
+        #expect(stored.first?.start == 0.4)
+        #expect(stored.first?.end == 3.6)
+        #expect(stored.first?.origin == .manual)
+        // The one nobody touched takes the new times.
+        #expect(stored.last?.start == 4)
+        #expect(stored.last?.origin == .recognised)
+    }
+
+    /// But only for the same words. A correction is about where a particular
+    /// phrase begins; re-splitting the text makes it meaningless.
+    @Test("A correction does not follow text it was not made for")
+    func correctionsDoNotFollowDifferentText() async throws {
+        let library = try library()
+        let id = try await text(in: library)
+        try await library.savePhrases([phrase(0, 0, 4)], for: id)
+        try await library.movePhrase(0, in: id, start: 0.4, end: 3.6)
+
+        try await library.savePhrases(
+            [Phrase(index: 0, start: 0, end: 4, textRange: 100 ..< 120)],
+            for: id,
+        )
+        let stored = try #require(try await library.phrases(for: id).first)
+        #expect(stored.start == 0)
+        #expect(stored.origin == .recognised)
     }
 
     @Test("A text with no phrases reports as much without fetching them")

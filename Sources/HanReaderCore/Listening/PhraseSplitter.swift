@@ -109,16 +109,16 @@ public enum PhraseSplitter {
     )
         -> [Range<Int>]
     {
+        let metrics = Metrics(text)
         var phrases: [Range<Int>] = []
         for sentence in sentences(in: text) {
-            let length = characterCount(of: text, in: sentence)
-            if length <= splitting.maximumLength {
+            if metrics.count(in: sentence) <= splitting.maximumLength {
                 phrases.append(sentence)
                 continue
             }
-            phrases.append(contentsOf: divide(sentence, in: text, splitting: splitting))
+            phrases.append(contentsOf: divide(sentence, metrics: metrics, splitting: splitting))
         }
-        return merge(phrases, in: text, splitting: splitting)
+        return merge(phrases, metrics: metrics, splitting: splitting)
     }
 
     // MARK: - Sentences
@@ -137,9 +137,11 @@ public enum PhraseSplitter {
             let isTrailing = trailing.contains(character)
             let isBlank = character.unicodeScalars.allSatisfy(\.properties.isWhitespace)
 
-            if pendingEnd != nil, isTrailing {
-                // A closing quote after the full stop still belongs to the
-                // sentence it closes.
+            if pendingEnd != nil, isTrailing || isTerminator {
+                // A closing quote after the full stop belongs to the sentence
+                // it closes — and so does a second terminator. 真的吗？！ is
+                // one question with an exclamation on it, not a question
+                // followed by a sentence consisting of ！.
                 pendingEnd = offset + width
                 offset += width
                 continue
@@ -185,7 +187,7 @@ public enum PhraseSplitter {
     /// easier to hold than one trimmed to make the arithmetic even.
     private static func divide(
         _ sentence: Range<Int>,
-        in text: String,
+        metrics: Metrics,
         splitting: PhraseSplitting,
     )
         -> [Range<Int>]
@@ -194,7 +196,7 @@ public enum PhraseSplitter {
         var clauseStart = sentence.lowerBound
         var offset = sentence.lowerBound
 
-        for character in characters(of: text, in: sentence) {
+        for character in metrics.text(in: sentence) {
             let width = character.utf16.count
             offset += width
             if separators.contains(character) || terminators.contains(character) {
@@ -215,7 +217,14 @@ public enum PhraseSplitter {
                 continue
             }
             let combined = last.lowerBound ..< clause.upperBound
-            if characterCount(of: text, in: combined) <= splitting.maximumLength {
+            // A clause with nothing to say is glued on **whatever the
+            // budget**. A sentence ending 「…？」」 divides into its last
+            // clause and then the closing quote, and if the clause before it
+            // is already over budget neither packing nor the minimum-length
+            // merge would take it — leaving a practice phrase that is one
+            // punctuation mark.
+            let isPunctuationOnly = metrics.count(in: clause) == 0
+            if isPunctuationOnly || metrics.count(in: combined) <= splitting.maximumLength {
                 packed[packed.count - 1] = combined
             } else {
                 packed.append(clause)
@@ -233,7 +242,7 @@ public enum PhraseSplitter {
     /// Glues a too-short phrase onto its predecessor.
     private static func merge(
         _ phrases: [Range<Int>],
-        in text: String,
+        metrics: Metrics,
         splitting: PhraseSplitting,
     )
         -> [Range<Int>]
@@ -241,7 +250,7 @@ public enum PhraseSplitter {
         guard splitting.minimumLength > 0 else { return phrases }
         var merged: [Range<Int>] = []
         for phrase in phrases {
-            guard characterCount(of: text, in: phrase) < splitting.minimumLength,
+            guard metrics.count(in: phrase) < splitting.minimumLength,
                   let last = merged.last
             else {
                 merged.append(phrase)
@@ -250,7 +259,7 @@ public enum PhraseSplitter {
             // Only when the result still fits, or a run of short fragments
             // would quietly grow one phrase past the cap.
             let combined = last.lowerBound ..< phrase.upperBound
-            if characterCount(of: text, in: combined) <= splitting.maximumLength {
+            if metrics.count(in: combined) <= splitting.maximumLength {
                 merged[merged.count - 1] = combined
             } else {
                 merged.append(phrase)
@@ -261,25 +270,72 @@ public enum PhraseSplitter {
 
     // MARK: - Measuring
 
-    /// Characters a learner would have to type: Han, Latin and digits. A
-    /// budget counted in punctuation would shrink the phrase that happens to
-    /// be heavily punctuated, which has nothing to do with how long it takes
-    /// to say.
-    static func characterCount(of text: String, in range: Range<Int>) -> Int {
-        characters(of: text, in: range).count { character in
-            character.unicodeScalars.contains { scalar in
-                switch ScalarClass.classify(scalar) {
-                case .han, .latin, .number: true
-                case .punctuation, .whitespace, .other: false
+    /// A text's UTF-16 units with a running count of the characters a
+    /// learner would have to type, so any range can be measured without
+    /// looking at it.
+    ///
+    /// Built once per split. The obvious implementation — decode the range
+    /// and count — copies the whole document's UTF-16 storage on every call,
+    /// and the splitter measures every sentence, then every packing step,
+    /// then every merge. On a book that is quadratic in the length of the
+    /// book, for an answer that is a subtraction.
+    struct Metrics {
+        let utf16: [UInt16]
+        /// `scorable[i]` is how many countable characters lie before offset
+        /// `i`, so a range costs one subtraction.
+        private let scorable: [Int]
+
+        init(_ text: String) {
+            var units: [UInt16] = []
+            units.reserveCapacity(text.utf16.count)
+            var counts = [0]
+            counts.reserveCapacity(text.utf16.count + 1)
+            var running = 0
+            for character in text {
+                let isScorable = character.unicodeScalars.contains { scalar in
+                    switch ScalarClass.classify(scalar) {
+                    case .han, .latin, .number: true
+                    case .punctuation, .whitespace, .other: false
+                    }
+                }
+                if isScorable {
+                    running += 1
+                }
+                for unit in character.utf16 {
+                    units.append(unit)
+                    counts.append(running)
                 }
             }
+            utf16 = units
+            scorable = counts
+        }
+
+        /// Characters a learner would have to type in this range.
+        ///
+        /// Punctuation and spacing are not counted: a budget that counted
+        /// them would shrink whichever phrase happened to be heavily
+        /// punctuated, which has nothing to do with how long it takes to
+        /// say.
+        func count(in range: Range<Int>) -> Int {
+            guard range.lowerBound >= 0, range.upperBound < scorable.count,
+                  range.lowerBound <= range.upperBound
+            else { return 0 }
+            return scorable[range.upperBound] - scorable[range.lowerBound]
+        }
+
+        func text(in range: Range<Int>) -> String {
+            guard range.lowerBound >= 0, range.upperBound <= utf16.count,
+                  range.lowerBound <= range.upperBound
+            else { return "" }
+            return String(decoding: utf16[range], as: UTF16.self)
         }
     }
 
-    private static func characters(of text: String, in range: Range<Int>) -> [Character] {
-        let utf16 = Array(text.utf16)
-        guard range.lowerBound >= 0, range.upperBound <= utf16.count else { return [] }
-        return Array(String(decoding: utf16[range], as: UTF16.self))
+    /// Characters a learner would have to type in a range of a text.
+    ///
+    /// Convenience over `Metrics` for a caller measuring one range once.
+    static func characterCount(of text: String, in range: Range<Int>) -> Int {
+        Metrics(text).count(in: range)
     }
 
     private static func trimmingTrailingWhitespace(
