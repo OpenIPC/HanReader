@@ -35,29 +35,6 @@ enum ReaderFixtures {
     /// distinction is invisible in a screenshot otherwise, and it is the one
     /// the reader most needs to be able to see — a composed reading is an
     /// approximation that will be wrong for heteronyms.
-    /// The authored table, keyed the way the reading surface asks for it.
-    ///
-    /// Derived from a document rather than written out, because a reading is
-    /// keyed on the word *and* its context: writing the keys by hand would
-    /// mean every fixture word silently losing its annotation the day someone
-    /// adds a 很 to the prose.
-    static func readings(for document: SegmentedDocument) -> [ReadingRequest: TokenReading] {
-        document.blocks.reduce(into: [:]) { result, block in
-            result.merge(readings(for: block.tokens)) { current, _ in current }
-        }
-    }
-
-    /// One paragraph's worth, for a caller rendering a single block.
-    static func readings(for tokens: [Token]) -> [ReadingRequest: TokenReading] {
-        var result: [ReadingRequest: TokenReading] = [:]
-        for (token, context) in zip(tokens, ReadingContext.contexts(in: tokens)) {
-            if let reading = readingsByWord[token.text] {
-                result[ReadingRequest(word: token.text, context: context)] = reading
-            }
-        }
-        return result
-    }
-
     static let readingsByWord: [String: TokenReading] = [
         "我": TokenReading(display: "wǒ", source: .dictionary),
         "爱": TokenReading(display: "ài", source: .dictionary),
@@ -89,6 +66,29 @@ enum ReaderFixtures {
 
     /// Four paragraphs and a blank line.
     ///
+    /// The authored table, keyed the way the reading surface asks for it.
+    ///
+    /// Derived from a document rather than written out, because a reading is
+    /// keyed on the word *and* its context: writing the keys by hand would
+    /// mean every fixture word silently losing its annotation the day someone
+    /// adds a 很 to the prose.
+    static func readings(for document: SegmentedDocument) -> [ReadingRequest: TokenReading] {
+        document.blocks.reduce(into: [:]) { result, block in
+            result.merge(readings(for: block.tokens)) { current, _ in current }
+        }
+    }
+
+    /// One paragraph's worth, for a caller rendering a single block.
+    static func readings(for tokens: [Token]) -> [ReadingRequest: TokenReading] {
+        var result: [ReadingRequest: TokenReading] = [:]
+        for (token, context) in zip(tokens, ReadingContext.contexts(in: tokens)) {
+            if let reading = readingsByWord[token.text] {
+                result[ReadingRequest(word: token.text, context: context)] = reading
+            }
+        }
+        return result
+    }
+
     /// 拍 has no entry in `readingsByWord`, so one token in the last paragraph
     /// renders with no annotation — the case that must still reserve its ruby
     /// band, or lines would differ in height according to dictionary coverage.

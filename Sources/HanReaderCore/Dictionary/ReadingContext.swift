@@ -98,18 +98,6 @@ public struct ReadingContext: Hashable, Sendable {
         preceding == nil
     }
 
-    /// The context of every token in a block, aligned one-to-one with
-    /// `tokens`.
-    ///
-    /// Computed over a block rather than a document, which is what stops a
-    /// context reaching across a paragraph break. Whitespace is skipped —
-    /// `很 重` with a space between is still a degree adverb modifying 重 —
-    /// but punctuation is not, so it severs the relation, correctly.
-    ///
-    /// Shared by the two callers that need it: the model, deciding what to
-    /// fetch, and the paragraph view, deciding what to look up. One function
-    /// so the two can never disagree about what a token's context is, which
-    /// they would otherwise express as pinyin flickering between two values.
     /// The context of one token, for a caller holding a position rather than
     /// a paragraph — a tap, which has no reason to classify every word around
     /// it to annotate one.
@@ -122,6 +110,18 @@ public struct ReadingContext: Hashable, Sendable {
         return Self(precedingWord: cursor >= 0 ? tokens[cursor].text : nil)
     }
 
+    /// The context of every token in a block, aligned one-to-one with
+    /// `tokens`.
+    ///
+    /// Computed over a block rather than a document, which is what stops a
+    /// context reaching across a paragraph break. Whitespace is skipped —
+    /// `很 重` with a space between is still a degree adverb modifying 重 —
+    /// but punctuation is not, so it severs the relation, correctly.
+    ///
+    /// Shared by the two callers that need it: the model, deciding what to
+    /// fetch, and the paragraph view, deciding what to look up. One function
+    /// so the two can never disagree about what a token's context is, which
+    /// they would otherwise express as pinyin flickering between two values.
     public static func contexts(in tokens: [Token]) -> [Self] {
         var contexts: [Self] = []
         contexts.reserveCapacity(tokens.count)
@@ -275,15 +275,16 @@ public enum HeteronymRules {
             // 很薄 "very thin", not bó "meagre, slight"
             "薄": "bao2",
         ],
-        // Only where negating either reading lands on the same answer. 长 and
-        // 薄 are deliberately absent: 不长 can be "does not grow" and 待我不薄
-        // is `bó`, so a negator does not settle them the way a degree adverb
-        // does.
+        // Only where negating either reading lands on the same answer, which
+        // is a much shorter list than it looks. 长 and 薄 are absent because
+        // 不长 can be "does not grow" and 待我不薄 is `bó`; 差 is absent
+        // because the bundled dictionary settles it against us, recording
+        // both 不差 [bu4 cha1] "to not lack" and 不差 [bu4 cha4] "not bad"
+        // as headwords. A degree adverb still settles 差 — 很差 is only
+        // "very poor" — which is the difference between the two classes.
         .negator: [
             // 不重 "not heavy" — "does not repeat" would be 不重复
             "重": "zhong4",
-            // 不差 "not bad", also 不差钱 — never chā "difference"
-            "差": "cha4",
             // 不空 "not empty" — free time is 没空, not 不空
             "空": "kong1",
         ],

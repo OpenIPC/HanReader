@@ -122,6 +122,22 @@ struct ReadingContextTests {
     /// The two classes are not interchangeable, and this is what keeps them
     /// apart: 待我不薄 is `bó` and 不长 can be "does not grow", so a negator
     /// must not reach the characters a degree adverb does.
+    @Test("A negator does not settle 差, where a degree adverb does")
+    func negatorDoesNotSettleDifference() {
+        // CC-CEDICT records both 不差 [bu4 cha1] "to not lack" and 不差
+        // [bu4 cha4] "not bad" as headwords, so a negator decides nothing
+        // here. 很差 is only ever "very poor".
+        let entries = [entry("差", "cha1", senses: 6), entry("差", "cha4", senses: 3)]
+        #expect(ReadingComposer.reading(
+            from: entries,
+            context: ReadingContext(precedingWord: "不"),
+        )?.display == "chā")
+        #expect(ReadingComposer.reading(
+            from: entries,
+            context: ReadingContext(precedingWord: "很"),
+        )?.display == "chà")
+    }
+
     @Test("A negator does not settle 长, where a degree adverb does")
     func negatorIsNarrowerThanDegreeAdverb() {
         #expect(ReadingComposer.reading(
@@ -249,6 +265,48 @@ struct ReadingContextTests {
             in: context,
         ) == nil)
         #expect(ReadingComposer.reading(from: entries, context: context)?.display == expected)
+    }
+
+    /// The rule fires on a single-character *token*, which is only sound if
+    /// a compound stays one token. Were 很重复 ever segmented 很 | 重 | 复,
+    /// the degree adverb would reach 重 and spell 重复 as `zhòng fù`.
+    ///
+    /// Both shipped segmenters keep it whole — a compound in the lexicon is
+    /// what maximum matching matches, and the repair pass only ever merges —
+    /// so this pins the property the rule leans on rather than trusting it.
+    @Test("A compound after a degree adverb stays one token", arguments: [
+        "很重复", "不重复", "这个任务很重复",
+    ])
+    func compoundsSurviveSegmentation(text: String) {
+        let lexicon = Lexicon(words: ["重复", "任务", "这个"])
+        let document = TextSegmenter(words: MaxMatchSegmenter(lexicon: lexicon))
+            .segment(text)
+        let tokens = document.blocks.flatMap(\.tokens)
+        #expect(tokens.contains { $0.text == "重复" })
+        // And so the rule never sees a lone 重 to act on.
+        let contexts = ReadingContext.contexts(in: tokens)
+        for (token, context) in zip(tokens, contexts) where token.text == "重" {
+            #expect(
+                HeteronymRules.preferredReading(
+                    for: Headword(simplified: token.text, traditional: nil),
+                    in: context,
+                ) == nil,
+            )
+        }
+    }
+
+    /// And the repair pass, which is what rescues a segmenter that does
+    /// split a known compound. It only merges, so it can turn 重 | 复 back
+    /// into 重复 but can never create the split this rule fears.
+    @Test("The repair pass rejoins a split compound")
+    func repairPassRejoinsCompounds() {
+        // Segmented character by character, which is the worst case the
+        // repair pass exists for and exactly the split this rule fears.
+        let split = TextSegmenter(words: CharacterSegmenter()).segment("很重复")
+        #expect(split.blocks.flatMap(\.tokens).map(\.text) == ["很", "重", "复"])
+
+        let repaired = DictionaryRepairPass(lexicon: Lexicon(words: ["重复"])).repair(split)
+        #expect(repaired.blocks.flatMap(\.tokens).map(\.text) == ["很", "重复"])
     }
 
     // MARK: - Classifying neighbours
