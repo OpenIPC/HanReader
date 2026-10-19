@@ -157,6 +157,15 @@ private struct Migration {
     /// on the former.
     private var newcomers: [Int64: Bool] = [:]
 
+    /// Spelled out rather than synthesised. A `private` stored property
+    /// drags the memberwise initializer down to `private` too, which the
+    /// toolchain CI pins enforces and the newer one on this machine does
+    /// not — so the synthesised version built locally and failed there.
+    init(repository: LibraryRepository, locations: AppDatabase.Locations) {
+        self.repository = repository
+        self.locations = locations
+    }
+
     /// - Returns: old row id to new `TextID`, so the progress rows can find
     ///   the text they belong to.
     mutating func importTexts(

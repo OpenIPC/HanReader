@@ -38,19 +38,38 @@ public final class SystemPlaybackSession: PlaybackSession {
 
     #if os(iOS)
         private var observers: [any NSObjectProtocol] = []
+
+        /// How many transports are using the shared session.
+        ///
+        /// `AVAudioSession` is one per process, so the obvious implementation
+        /// — deactivate when I am done — stops the *other* window's narration
+        /// on an iPad with two texts open. Counted instead, and released only
+        /// by the last one out.
+        private static var users = 0
+
+        /// Unsubscription, captured so `deinit` can run it.
+        ///
+        /// `deinit` is nonisolated and this class is not, so it cannot reach
+        /// the array above — the same bargain as `AVPlayerAudioEngine`'s. It
+        /// is needed only on iOS, which is why the macOS build compiled
+        /// happily and CI was the first to say otherwise.
+        private nonisolated(unsafe) var teardown: (() -> Void)?
     #endif
+
+    /// Whether this session holds an activation of its own, so a repeated
+    /// activate or a deactivate without one cannot unbalance the count.
+    private var isActive = false
 
     public init() {}
 
     deinit {
         #if os(iOS)
-            for observer in observers {
-                NotificationCenter.default.removeObserver(observer)
-            }
+            teardown?()
         #endif
     }
 
     public func activate() throws {
+        guard !isActive else { return }
         #if os(iOS)
             let session = AVAudioSession.sharedInstance()
             // `.spokenAudio` rather than plain `.playback`: it tells the system
@@ -58,12 +77,22 @@ public final class SystemPlaybackSession: PlaybackSession {
             // over it, and the "pause spoken audio" accessory controls apply.
             try session.setCategory(.playback, mode: .spokenAudio)
             try session.setActive(true)
+            Self.users += 1
             subscribe()
         #endif
+        isActive = true
     }
 
     public func deactivate() {
+        guard isActive else { return }
+        isActive = false
         #if os(iOS)
+            Self.users -= 1
+            // Only the last transport out puts the session down. Deactivating
+            // it while another window is still playing through it stops that
+            // window's narration, which is this fix in reverse.
+            guard Self.users <= 0 else { return }
+            Self.users = 0
             // Notifying others is what lets the music the reader interrupted
             // start itself again. Failing here is not worth surfacing: the
             // session is already idle and the reader has nothing to do about it.
@@ -114,6 +143,13 @@ public final class SystemPlaybackSession: PlaybackSession {
                 else { return }
                 self?.send(.outputGone)
             })
+
+            let registered = observers
+            teardown = {
+                for observer in registered {
+                    NotificationCenter.default.removeObserver(observer)
+                }
+            }
         }
 
         private func send(_ interruption: PlaybackInterruption) {
