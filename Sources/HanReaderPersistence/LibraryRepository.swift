@@ -153,6 +153,31 @@ public struct LibraryRepository: Sendable {
         }
     }
 
+    /// Stores a playhead without disturbing the reading position.
+    ///
+    /// The mirror of `save(_:)`, which writes a position and leaves the
+    /// playhead alone: the transport moves while the page does not, and the
+    /// page scrolls while the audio does not, so each writes only its own
+    /// column. A row is created if the reader has only ever played audio and
+    /// never scrolled — otherwise the first playhead of a session would be
+    /// dropped silently by an UPDATE that matched nothing.
+    public func saveAudioTime(
+        _ time: Double,
+        for id: TextID,
+        at date: Date = .now,
+    ) async throws {
+        try await dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO readingPosition
+                    (textId, blockIndex, tokenIndex, characterOffset, audioTime, updatedAt)
+                VALUES (?, 0, 0, 0, ?, ?)
+                ON CONFLICT(textId) DO UPDATE SET
+                    audioTime = excluded.audioTime,
+                    updatedAt = excluded.updatedAt
+            """, arguments: [id.rawValue, time, date])
+        }
+    }
+
     /// Clears a stored playhead. Separate from `save(_:)`, which deliberately
     /// preserves one it was not given.
     public func clearAudioTime(of id: TextID) async throws {
@@ -257,6 +282,49 @@ public struct LibraryRepository: Sendable {
         }
     }
 
+    // MARK: - Helpers
+
+    /// The stored preview. Taken by character so a multi-byte script is not
+    /// cut mid-character, and collapsed so newlines do not render as gaps.
+    /// Scans only as far as it needs to.
+    ///
+    /// The obvious implementation -- trim, split, join, then take a prefix --
+    /// allocates intermediates proportional to the *whole document* in order
+    /// to produce 120 characters. For a novel that is tens of megabytes of
+    /// garbage per import.
+    static func preview(of content: String, limit: Int = 120) -> String {
+        var out = ""
+        out.reserveCapacity(limit)
+        var pendingSpace = false
+
+        for character in content {
+            if character.isWhitespace {
+                // Leading whitespace is dropped; interior runs collapse to one
+                // space, emitted only once something follows.
+                pendingSpace = !out.isEmpty
+                continue
+            }
+            if pendingSpace {
+                out.append(" ")
+                pendingSpace = false
+                if out.count == limit {
+                    return out
+                }
+            }
+            out.append(character)
+            if out.count == limit {
+                return out
+            }
+        }
+        return out
+    }
+}
+
+/// Attached narration.
+///
+/// Split out so the repository's own body stays readable; these are one
+/// coherent concern and they arrived together in M7.
+extension LibraryRepository {
     // MARK: - Audio
 
     public func attachAudio(_ track: AudioTrack) async throws {
@@ -294,43 +362,6 @@ public struct LibraryRepository: Sendable {
                 importedAt: row["importedAt"],
             )
         }
-    }
-
-    // MARK: - Helpers
-
-    /// The stored preview. Taken by character so a multi-byte script is not
-    /// cut mid-character, and collapsed so newlines do not render as gaps.
-    /// Scans only as far as it needs to.
-    ///
-    /// The obvious implementation -- trim, split, join, then take a prefix --
-    /// allocates intermediates proportional to the *whole document* in order
-    /// to produce 120 characters. For a novel that is tens of megabytes of
-    /// garbage per import.
-    static func preview(of content: String, limit: Int = 120) -> String {
-        var out = ""
-        out.reserveCapacity(limit)
-        var pendingSpace = false
-
-        for character in content {
-            if character.isWhitespace {
-                // Leading whitespace is dropped; interior runs collapse to one
-                // space, emitted only once something follows.
-                pendingSpace = !out.isEmpty
-                continue
-            }
-            if pendingSpace {
-                out.append(" ")
-                pendingSpace = false
-                if out.count == limit {
-                    return out
-                }
-            }
-            out.append(character)
-            if out.count == limit {
-                return out
-            }
-        }
-        return out
     }
 }
 

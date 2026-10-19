@@ -71,11 +71,46 @@ final class AppServices: Sendable {
     static func launch(bundle: Bundle = .main) async throws -> AppServices {
         let locations = try AppDatabase.Locations.standard()
         let library = try LibraryRepository(locations: locations)
+        await migratePrototypeLibrary(into: library, locations: locations)
         return try await opening(
             library: library,
             locations: locations,
             bundle: bundle,
         )
+    }
+
+    /// Brings a reader's prototype library across, once.
+    ///
+    /// Before the dictionaries are opened, because it only touches the
+    /// library and a reader with texts to migrate should have them whatever
+    /// the dictionaries do. Never fatal: a migration that fails leaves the
+    /// old file in place to try again next launch, and an app that refuses
+    /// to start because of it would be worse than one that starts without
+    /// the old texts.
+    private static func migratePrototypeLibrary(
+        into library: LibraryRepository,
+        locations: AppDatabase.Locations,
+    ) async {
+        do {
+            guard let outcome = try await PrototypeLibrary.migrateIfPresent(
+                into: library,
+                locations: locations,
+            ) else { return }
+            Log.info(
+                "services",
+                """
+                migrated the previous library: \(outcome.texts) texts, \
+                \(outcome.alreadyPresent) already present, \
+                \(outcome.revealedWords) revealed words, \
+                \(outcome.audioTracks) audio tracks
+                """,
+            )
+            for note in outcome.notes {
+                Log.error("services", note)
+            }
+        } catch {
+            Log.error("services", "could not migrate the previous library: \(error)")
+        }
     }
 
     /// The same services with the dictionaries read again.
