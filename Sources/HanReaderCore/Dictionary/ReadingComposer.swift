@@ -164,12 +164,16 @@ public enum ReadingComposer {
         let usable = entries.filter(isUsable)
         guard let fallback = usable.max(by: isWeaker) else { return nil }
 
-        // A grammatical constraint beats every ranking below it, because it is
-        // the only one that knows the sentence. Applied before the rest and
-        // only where the dictionary actually offers the preferred reading, so
-        // a rule naming a reading this dictionary does not have falls through
-        // to the context-free answer rather than annotating nothing.
-        let best = preferred(in: usable, context: context) ?? fallback
+        // Three tiers, narrowest first. A grammatical constraint beats
+        // everything below it because it is the only one that knows the
+        // sentence; a corrected default beats the ranking because the ranking
+        // is reading evidence that points the wrong way. Each applies only
+        // where the dictionary actually offers the reading it names, so a
+        // rule this dictionary cannot satisfy falls through to the
+        // context-free answer rather than annotating nothing.
+        let best = preferred(in: usable, context: context)
+            ?? corrected(in: usable)
+            ?? fallback
 
         // Compared case-insensitively. Nearly every common character has a
         // surname entry alongside its ordinary one -- 年 is `nián` and
@@ -213,8 +217,32 @@ public enum ReadingComposer {
               let headword = entries.first?.headword,
               let wanted = HeteronymRules.preferredReading(for: headword, in: context)
         else { return nil }
-        return entries
-            .filter { $0.readingKey.caseInsensitiveCompare(wanted) == .orderedSame }
+        return matching(wanted, in: entries)
+    }
+
+    /// The entry a corrected default asks for, for a character whose
+    /// dictionary evidence points at a reading no living text uses.
+    ///
+    /// Below the context rules deliberately: 价 is `jià` for want of any
+    /// reason to think otherwise, whereas 很 before 重 is a reason. A
+    /// character in both tables takes the contextual answer.
+    private static func corrected(in entries: [DictionaryEntry]) -> DictionaryEntry? {
+        guard let headword = entries.first?.headword,
+              let wanted = HeteronymRules.defaultReading(for: headword)
+        else { return nil }
+        return matching(wanted, in: entries)
+    }
+
+    /// Entries whose reading is the one named, best first by the ordinary
+    /// ranking — several can share it, and 和 has four under `hé`.
+    private static func matching(
+        _ reading: String,
+        in entries: [DictionaryEntry],
+    )
+        -> DictionaryEntry?
+    {
+        entries
+            .filter { $0.readingKey.caseInsensitiveCompare(reading) == .orderedSame }
             .max(by: isWeaker)
     }
 
@@ -276,7 +304,12 @@ public enum ReadingComposer {
 
         var tokens: [PinyinToken] = []
         for character in word {
-            guard let reading = try lookup.readings(forCharacter: character).first else {
+            // The per-character table is ranked by the same sense count the
+            // whole-word path uses, so it needs the same correction: without
+            // it a word composed from its characters would spell 价 `jiè`
+            // while the same character tapped on its own read `jià`.
+            guard let reading = try correcting(lookup.readings(forCharacter: character))
+            else {
                 return nil
             }
             let parsed = Pinyin.parse(numeric: reading.numeric)
@@ -290,5 +323,20 @@ public enum ReadingComposer {
         let display = Pinyin.display(tokens, style: .diacritic)
         guard !display.isEmpty else { return nil }
         return TokenReading(display: display, source: .composed)
+    }
+
+    /// The best of a character's candidate readings: the corrected default
+    /// if the table names one and the dictionary has it, otherwise the
+    /// highest-ranked, which is what the caller would have taken anyway.
+    private static func correcting(_ candidates: [CharacterReading]) -> CharacterReading? {
+        guard let character = candidates.first?.character,
+              let wanted = HeteronymRules.defaultReading(
+                  for: Headword(simplified: String(character), traditional: nil),
+              ),
+              let corrected = candidates.first(where: {
+                  $0.numeric.caseInsensitiveCompare(wanted) == .orderedSame
+              })
+        else { return candidates.first }
+        return corrected
     }
 }

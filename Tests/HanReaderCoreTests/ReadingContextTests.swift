@@ -7,14 +7,26 @@ import Testing
 /// which entries exist rather than building a SQLite container to ask.
 private struct StubDictionary: DictionaryLookup {
     var words: [String: [DictionaryEntry]] = [:]
+    var characters: [Character: [CharacterReading]] = [:]
 
     func entries(for headword: String) throws -> [DictionaryEntry] {
         words[headword] ?? []
     }
 
     func readings(forCharacter character: Character) throws -> [CharacterReading] {
-        []
+        characters[character] ?? []
     }
+}
+
+/// Candidates come out of the container already ranked, so `rank` is the
+/// order the composed path would otherwise take them in.
+private func character(_ char: Character, _ numeric: String, rank: Int) -> CharacterReading {
+    CharacterReading(
+        character: char,
+        numeric: numeric,
+        display: Pinyin.display(Pinyin.parse(numeric: numeric)),
+        rank: rank,
+    )
 }
 
 private func entry(
@@ -326,5 +338,140 @@ struct ReadingContextTests {
         // And unchanged where there is no adverb, in the same sentence.
         let bare = try ReadingComposer.reading(for: "重", in: stub, context: contexts[0])
         #expect(bare?.display == "chóng")
+    }
+}
+
+/// Kept apart from the context rules because it answers a different
+/// question. A context rule says which of two live readings this sentence
+/// wants; a correction says the dictionary's own evidence is pointing at a
+/// reading no living sentence wants.
+@Suite("Heteronym corrections")
+struct HeteronymCorrectionTests {
+    /// 价 as CC-CEDICT holds it. The archaic reading has both a neutral tone
+    /// and more senses, so every signal the ranking has points at it.
+    private var priceOrGreat: [DictionaryEntry] {
+        [
+            entry("价", traditional: "價", "jie5", senses: 4),
+            entry("价", traditional: "價", "jia4", senses: 3),
+        ]
+    }
+
+    /// 她叫我给个价 — "name me a price". `jiè` ("great, middleman") is not a
+    /// reading of modern Chinese, but it is the one CC-CEDICT says most
+    /// about, and it carries a neutral tone on top of that.
+    @Test("价 is jià, against both the neutral tone and the sense count")
+    func correctedDefaultBeatsTheRanking() {
+        #expect(ReadingComposer.reading(from: priceOrGreat)?.display == "jià")
+    }
+
+    /// The correction has to hold with no context at all, which is the case
+    /// it exists for: unlike 重, there is no neighbour that settles 价 —
+    /// there is nothing to settle.
+    @Test(
+        "价 is jià in every context",
+        arguments: [nil, "很", "不", "个", "。"],
+    )
+    func correctedDefaultIgnoresContext(preceding: String?) {
+        let context = ReadingContext(precedingWord: preceding)
+        #expect(ReadingComposer.reading(from: priceOrGreat, context: context)?
+            .display == "jià")
+    }
+
+    @Test(
+        "Every generated correction is applied",
+        arguments: [
+            ("价", "jie5", "jia4", "jià"),
+            ("椎", "chui2", "zhui1", "zhuī"),
+            ("炮", "bao1", "pao4", "pào"),
+            ("络", "lao4", "luo4", "luò"),
+            ("膏", "gao4", "gao1", "gāo"),
+        ],
+    )
+    func everyCorrectionApplies(
+        word: String,
+        wrong: String,
+        right: String,
+        expected: String,
+    ) {
+        // The wrong reading given more senses, which is the shape that made
+        // the ranking choose it in the first place.
+        let entries = [
+            entry(word, wrong, senses: 9),
+            entry(word, right, senses: 1),
+        ]
+        #expect(ReadingComposer.reading(from: entries)?.display == expected)
+    }
+
+    /// A character with no correction must be left to the ranking, or the
+    /// table would be doing the ranking's job everywhere.
+    @Test("An ordinary character has no correction")
+    func ordinaryCharactersAreUncorrected() {
+        #expect(HeteronymRules.defaultReading(
+            for: Headword(simplified: "重", traditional: nil),
+        ) == nil)
+        #expect(HeteronymRules.defaultReading(
+            for: Headword(simplified: "价格", traditional: nil),
+        ) == nil)
+    }
+
+    /// Sentence-final particles are unattested in compounds for a reason
+    /// that has nothing to do with being archaic, and the generator excludes
+    /// them. If one ever reached the table, 他来了吧 would read `bā`.
+    @Test("Particles are not corrected", arguments: ["吧", "呢", "啊", "吗", "了", "的"])
+    func particlesAreNotCorrected(particle: String) {
+        #expect(HeteronymRules.defaultReading(
+            for: Headword(simplified: particle, traditional: nil),
+        ) == nil)
+    }
+
+    /// A correction the dictionary cannot satisfy must not cost the word its
+    /// annotation.
+    @Test("A correction the dictionary lacks falls through")
+    func unsatisfiableCorrectionFallsThrough() {
+        let entries = [entry("价", "jie5", senses: 4)]
+        #expect(ReadingComposer.reading(from: entries)?.display == "jie")
+    }
+
+    /// The composer tries context first and a correction second, but no
+    /// character is in both tables, so that order decides nothing today and
+    /// a test asserting it would be asserting an accident.
+    ///
+    /// This is the test worth having instead: it fails the moment the two
+    /// overlap, which is exactly when the order starts to matter and someone
+    /// has to decide whether context-first is right for that character.
+    @Test("The context and correction tables are disjoint")
+    func tablesAreDisjoint() {
+        let corrected = Set(HeteronymRules.defaults.keys)
+        #expect(!corrected.isEmpty)
+        for (functionWord, rules) in HeteronymRules.table {
+            let overlap = Set(rules.keys).intersection(corrected)
+            #expect(overlap.isEmpty, "\(functionWord) also corrected: \(overlap)")
+        }
+    }
+
+    /// The per-character table is built by the same sense-count ranking, so
+    /// without the correction a word assembled from its characters spelled
+    /// 价 `jiè` while the character tapped on its own read `jià` — the same
+    /// character, two pronunciations, one screen apart.
+    @Test("A word composed from its characters uses the corrected reading")
+    func composedReadingIsCorrected() throws {
+        let stub = StubDictionary(characters: [
+            "价": [character("价", "jie5", rank: 0), character("价", "jia4", rank: 1)],
+            "目": [character("目", "mu4", rank: 0)],
+        ])
+        let reading = try ReadingComposer.composedReading(for: "价目", in: stub)
+        #expect(reading?.display == "jiàmù")
+    }
+
+    /// And a character with no correction keeps whatever the container
+    /// ranked first, or the table would be overriding everywhere.
+    @Test("An uncorrected character keeps its ranking in a composed word")
+    func composedReadingKeepsTheRanking() throws {
+        let stub = StubDictionary(characters: [
+            "中": [character("中", "zhong1", rank: 0), character("中", "zhong4", rank: 1)],
+            "目": [character("目", "mu4", rank: 0)],
+        ])
+        let reading = try ReadingComposer.composedReading(for: "中目", in: stub)
+        #expect(reading?.display == "zhōngmù")
     }
 }

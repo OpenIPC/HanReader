@@ -206,10 +206,60 @@ public enum HeteronymRules {
         return nil
     }
 
+    /// The reading a character takes when the sentence says nothing either
+    /// way, for the few whose dictionary evidence points at a dead reading.
+    ///
+    /// Separate from the context rules above, and needed for a different
+    /// reason. 重 needs context because both its readings are live: it is
+    /// `chóng` in 重复 and `zhòng` in 很重, and only the neighbours separate
+    /// them. 价 needs no context at all — `jiè` is simply not a reading of
+    /// modern Chinese — but every signal available to the ranking points at
+    /// it, because CC-CEDICT documents the archaic sense more thoroughly
+    /// than the living one: four glosses for `jiè` "great, middleman"
+    /// against three for `jià` "price", and a neutral tone besides. So 她叫
+    /// 我给个价 was annotated `jiè`.
+    ///
+    /// The criterion is mechanical and the table is generated, not curated:
+    /// a reading used by *no* multi-character headword, beside one used by
+    /// many. Compounds are the evidence because that is where a character's
+    /// living readings appear. Readings glossed as grammatical are excluded,
+    /// or every sentence-final particle would qualify — 吧, 呢, 啊 and 吗 are
+    /// all absent from compounds, and for a reason that has nothing to do
+    /// with being archaic.
+    ///
+    /// Regenerate with `Scripts/heteronym-defaults.py`, which prints these
+    /// lines verbatim.
+    public static func defaultReading(for headword: Headword) -> String? {
+        for script in headword.bothScripts where script.count == 1 {
+            if let character = script.first, let reading = defaults[character] {
+                return reading
+            }
+        }
+        return nil
+    }
+
+    /// Internal rather than private so a test can check it against the
+    /// context table: the two must stay disjoint, or the tier order starts
+    /// deciding answers and someone has to argue it is the right one.
+    static let defaults: [Character: String] = [
+        // 161 compounds say jia4, none say jie5 "great/good/middleman/servant"
+        "价": "jia4",
+        "價": "jia4",
+        // 21 compounds say zhui1, none say chui2 "a hammer"
+        "椎": "zhui1",
+        // 65 compounds say pao4, none say bao1 "to sauté/to fry/to dry by heating"
+        "炮": "pao4",
+        // 87 compounds say luo4, none say lao4 "small net"
+        "络": "luo4",
+        "絡": "luo4",
+        // 38 compounds say gao1, none say gao4 "to moisten/to grease/to apply"
+        "膏": "gao1",
+    ]
+
     /// A degree adverb forces the stative reading. Each line is the phrase
     /// that justifies it, and the reading the context-free ranking picked
     /// instead.
-    private static let table: [FunctionWordClass: [Character: String]] = [
+    static let table: [FunctionWordClass: [Character: String]] = [
         .degreeAdverb: [
             // 很重 "very heavy", not chóng "to repeat"
             "重": "zhong4",
