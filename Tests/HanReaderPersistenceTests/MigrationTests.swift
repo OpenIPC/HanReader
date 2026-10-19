@@ -15,7 +15,7 @@ struct MigrationTests {
     /// runtime failure months later. When this fails, either the change was
     /// unintended, or it was intended and needs a new migration plus an
     /// updated snapshot.
-    @Test("The v1 schema is what we think it is")
+    @Test("The schema is what we think it is")
     func schemaSnapshot() throws {
         let queue = try AppDatabase.inMemoryLibrary()
         let schema = try queue.read { db in
@@ -32,8 +32,10 @@ struct MigrationTests {
         #expect(schema == [
             "appState(key,value)",
             "audioTrack(textId,relativePath,duration,importedAt)",
+            "dictationAttempt(textId,idx,typed,accuracy,attempts,updatedAt)",
             "dictionaryPreference(slug,providesGlosses,providesReadings,"
                 + "providesLexicon,sortOrder)",
+            "phrase(textId,idx,startTime,endTime,textStart,textEnd,confidence,origin,grade)",
             "readingPosition(textId,blockIndex,tokenIndex,characterOffset,audioTime,updatedAt)",
             "revealedWord(textId,word,revealedAt)",
             "text(id,title,content,contentHash,characterCount,preview,"
@@ -49,7 +51,11 @@ struct MigrationTests {
             try migrator.hasCompletedMigrations(db)
         }
         #expect(completed)
-        #expect(migrator.migrations == ["v1_initial", "v2_dictionary_preferences"])
+        #expect(migrator.migrations == [
+            "v1_initial",
+            "v2_dictionary_preferences",
+            "v3_listening_practice",
+        ])
     }
 
     /// Running the migrator again must be a no-op. Every launch does this.
@@ -64,7 +70,7 @@ struct MigrationTests {
                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'grdb_%'
             """)
         }
-        #expect(tables == 6)
+        #expect(tables == 8)
     }
 
     /// The case an empty-database test cannot reach: a migration that works
