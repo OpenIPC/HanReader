@@ -74,7 +74,7 @@ struct ReaderLayoutRenderTests {
         let view = ParagraphView(
             block: block,
             style: style,
-            readings: ReaderFixtures.readingsByWord,
+            readings: ReaderFixtures.readings(for: block.tokens),
             selection: nil,
             reveal: reveal,
             onTap: { _ in },

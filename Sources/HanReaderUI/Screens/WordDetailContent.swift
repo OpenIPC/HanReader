@@ -23,7 +23,7 @@ struct WordDetailContent: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 if detail.isDefined {
-                    ForEach(Array(detail.groups.enumerated()), id: \.offset) { _, group in
+                    ForEach(Array(detail.orderedGroups.enumerated()), id: \.offset) { _, group in
                         groupView(group)
                     }
                 } else {

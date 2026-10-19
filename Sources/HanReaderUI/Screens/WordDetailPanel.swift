@@ -71,7 +71,7 @@ struct WordDetailPanel: View {
                 word: detail.word,
                 reading: detail.reading,
                 summary: nil,
-                senses: detail.entries,
+                senses: detail.entriesForDisplayedReading,
             )
         }
     }

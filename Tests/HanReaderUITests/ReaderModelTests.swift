@@ -64,10 +64,10 @@ struct ReaderModelTests {
         let model = fixture.model
         await model.load()
 
-        #expect(model.readings["我"]?.display == "wǒ")
-        #expect(model.readings["中国"]?.display == "Zhōngguó")
+        #expect(model.readings[ReadingRequest(word: "我")]?.display == "wǒ")
+        #expect(model.readings[ReadingRequest(word: "中国")]?.display == "Zhōngguó")
         // A word the dictionary does not have is simply absent.
-        #expect(model.readings["。"] == nil)
+        #expect(model.readings[ReadingRequest(word: "。")] == nil)
     }
 
     /// The window is asymmetric because reading goes downwards, and bounded

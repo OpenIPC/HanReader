@@ -32,7 +32,11 @@ actor DictionaryService {
     /// 77% of BKRS entries carry none. Nil when the service was built from a
     /// single lookup, as the tests and previews do.
     private let set: DictionarySet?
-    private var readingCache: BoundedCache<String, TokenReading?>
+    /// Keyed on the word *and* its context, not the word alone. 重 is
+    /// `zhòng` after 很 and `chóng` on its own, so a cache keyed on the word
+    /// would serve whichever of the two was asked for first to every
+    /// occurrence in the book.
+    private var readingCache: BoundedCache<ReadingRequest, TokenReading?>
     private var entryCache: BoundedCache<String, [DictionaryEntry]>
 
     /// Whether a database read has already failed.
@@ -95,33 +99,41 @@ actor DictionaryService {
 
     /// Readings for a window of words, as one batch.
     ///
-    /// Returns only the words that have one, so the caller can treat a
+    /// Returns only the requests that have one, so the caller can treat a
     /// missing key and a word with no reading identically — which it should,
     /// because they look identical on the page.
-    func readings(for words: some Sequence<String>) -> [String: TokenReading] {
-        var result: [String: TokenReading] = [:]
-        for word in words {
-            if let reading = reading(for: word) {
-                result[word] = reading
+    func readings(
+        for requests: some Sequence<ReadingRequest>,
+    )
+        -> [ReadingRequest: TokenReading]
+    {
+        var result: [ReadingRequest: TokenReading] = [:]
+        for request in requests {
+            if let reading = reading(for: request) {
+                result[request] = reading
             }
         }
         return result
     }
 
-    func reading(for word: String) -> TokenReading? {
-        if let cached = readingCache.value(forKey: word) {
+    func reading(for request: ReadingRequest) -> TokenReading? {
+        if let cached = readingCache.value(forKey: request) {
             return cached
         }
+        let word = request.word
         // Routed through `entries(for:)` rather than letting the composer do
         // its own lookup. The composer would query for exactly the same rows
         // and throw them away, so annotating a word and then tapping it ran
         // the same whole-word query twice -- once to find out how it sounds
         // and once to find out what it means.
-        let reading = ReadingComposer.reading(from: entries(for: word))
+        let reading = ReadingComposer.reading(
+            from: entries(for: word),
+            context: request.context,
+        )
             ?? attempt("composed reading for \(word)", default: nil) {
                 try ReadingComposer.composedReading(for: word, in: lookup)
             }
-        readingCache.insert(reading, forKey: word)
+        readingCache.insert(reading, forKey: request)
         return reading
     }
 

@@ -17,7 +17,7 @@ import SwiftUI
 struct ReaderSurface: View {
     let document: SegmentedDocument
     let style: ReaderStyle
-    let readings: [String: TokenReading]
+    let readings: [ReadingRequest: TokenReading]
     let selection: TokenID?
     let reveal: RevealSet
     let onTap: (TokenID) -> Void

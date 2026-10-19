@@ -77,13 +77,19 @@ public protocol DictionaryLookup: Sendable {
 /// the English dictionary.
 public enum ReadingComposer {
     /// The reading to show above `word`, or nil if nothing is known.
+    ///
+    /// - Parameter context: what the neighbouring words say about how this one
+    ///   is being used. Consulted only for a word whose readings actually
+    ///   disagree, so passing `.none` changes nothing for the 99% of tokens
+    ///   that have one reading.
     public static func reading(
         for word: String,
         in lookup: some DictionaryLookup,
+        context: ReadingContext = .none,
     ) throws
         -> TokenReading?
     {
-        if let exact = try exactReading(for: word, in: lookup) {
+        if let exact = try exactReading(for: word, in: lookup, context: context) {
             return exact
         }
         return try composedReading(for: word, in: lookup)
@@ -118,17 +124,30 @@ public enum ReadingComposer {
     /// Lowercase outranks everything, matching `LexiconBuilder`: a capital
     /// marks a surname or a place, rarely the reading wanted in prose.
     ///
-    /// The four it still gets wrong — 为, 长, 重, 相 — have no neutral-tone
-    /// reading and no signal to separate them. Those are exactly the cases a
-    /// tagger exists for, and they are marked `.ambiguous` so the reader can
-    /// see the annotation is a guess.
+    /// ### Where the rule runs out, and what picks up
+    ///
+    /// 为, 长, 重 and 相 have no neutral-tone reading and nothing in the
+    /// dictionary to separate them, so the sense count decides and it decides
+    /// badly: CC-CEDICT says more about 重 as `chóng` ("to repeat") than as
+    /// `zhòng` ("heavy"), which annotated 很重 — "very heavy" — as `chóng`.
+    ///
+    /// No context-free rule can fix that, because both readings are right
+    /// somewhere: 重 is `chóng` in 重复 and `zhòng` in 很重. So `context` is
+    /// consulted first, and `HeteronymRules` answers for the handful of cases
+    /// where a closed-class neighbour settles it grammatically — a degree
+    /// adverb can only modify a stative predicate, so 很 before 重 rules
+    /// `chóng` out rather than merely making it less likely.
+    ///
+    /// What the rules do not reach is still marked `.ambiguous`, so the
+    /// annotation is drawn faintly and the panel lists every reading.
     static func exactReading(
         for word: String,
         in lookup: some DictionaryLookup,
+        context: ReadingContext = .none,
     ) throws
         -> TokenReading?
     {
-        try reading(from: lookup.entries(for: word))
+        try reading(from: lookup.entries(for: word), context: context)
     }
 
     /// The reading to show, given entries already fetched.
@@ -136,9 +155,25 @@ public enum ReadingComposer {
     /// Separate from `exactReading(for:in:)` so a caller that has the entries
     /// in hand — the detail panel has just fetched them to show definitions —
     /// does not query for them a second time.
-    public static func reading(from entries: [DictionaryEntry]) -> TokenReading? {
+    public static func reading(
+        from entries: [DictionaryEntry],
+        context: ReadingContext = .none,
+    )
+        -> TokenReading?
+    {
         let usable = entries.filter(isUsable)
-        guard let best = usable.max(by: isWeaker) else { return nil }
+        guard let fallback = usable.max(by: isWeaker) else { return nil }
+
+        // Three tiers, narrowest first. A grammatical constraint beats
+        // everything below it because it is the only one that knows the
+        // sentence; a corrected default beats the ranking because the ranking
+        // is reading evidence that points the wrong way. Each applies only
+        // where the dictionary actually offers the reading it names, so a
+        // rule this dictionary cannot satisfy falls through to the
+        // context-free answer rather than annotating nothing.
+        let best = preferred(in: usable, context: context)
+            ?? corrected(in: usable)
+            ?? fallback
 
         // Compared case-insensitively. Nearly every common character has a
         // surname entry alongside its ordinary one -- 年 is `nián` and
@@ -164,6 +199,51 @@ public enum ReadingComposer {
     /// *confident* one. No annotation is the honest rendering.
     private static func isUsable(_ entry: DictionaryEntry) -> Bool {
         !entry.readingDisplay.isEmpty && !entry.reading.contains(.unknown)
+    }
+
+    /// The entry a context rule asks for, if there is a rule and the
+    /// dictionary has the reading it names.
+    ///
+    /// Several entries can share the preferred reading — 和 has four under
+    /// `hé` — so the ordinary ranking still chooses between them. The rule
+    /// narrows the field; it does not replace the ranking.
+    private static func preferred(
+        in entries: [DictionaryEntry],
+        context: ReadingContext,
+    )
+        -> DictionaryEntry?
+    {
+        guard !context.isEmpty,
+              let headword = entries.first?.headword,
+              let wanted = HeteronymRules.preferredReading(for: headword, in: context)
+        else { return nil }
+        return matching(wanted, in: entries)
+    }
+
+    /// The entry a corrected default asks for, for a character whose
+    /// dictionary evidence points at a reading no living text uses.
+    ///
+    /// Below the context rules deliberately: 价 is `jià` for want of any
+    /// reason to think otherwise, whereas 很 before 重 is a reason. A
+    /// character in both tables takes the contextual answer.
+    private static func corrected(in entries: [DictionaryEntry]) -> DictionaryEntry? {
+        guard let headword = entries.first?.headword,
+              let wanted = HeteronymRules.defaultReading(for: headword)
+        else { return nil }
+        return matching(wanted, in: entries)
+    }
+
+    /// Entries whose reading is the one named, best first by the ordinary
+    /// ranking — several can share it, and 和 has four under `hé`.
+    private static func matching(
+        _ reading: String,
+        in entries: [DictionaryEntry],
+    )
+        -> DictionaryEntry?
+    {
+        entries
+            .filter { $0.readingKey.caseInsensitiveCompare(reading) == .orderedSame }
+            .max(by: isWeaker)
     }
 
     /// Whether `lhs` is the worse choice of reading. See `exactReading` for
@@ -224,7 +304,12 @@ public enum ReadingComposer {
 
         var tokens: [PinyinToken] = []
         for character in word {
-            guard let reading = try lookup.readings(forCharacter: character).first else {
+            // The per-character table is ranked by the same sense count the
+            // whole-word path uses, so it needs the same correction: without
+            // it a word composed from its characters would spell 价 `jiè`
+            // while the same character tapped on its own read `jià`.
+            guard let reading = try correcting(lookup.readings(forCharacter: character))
+            else {
                 return nil
             }
             let parsed = Pinyin.parse(numeric: reading.numeric)
@@ -238,5 +323,20 @@ public enum ReadingComposer {
         let display = Pinyin.display(tokens, style: .diacritic)
         guard !display.isEmpty else { return nil }
         return TokenReading(display: display, source: .composed)
+    }
+
+    /// The best of a character's candidate readings: the corrected default
+    /// if the table names one and the dictionary has it, otherwise the
+    /// highest-ranked, which is what the caller would have taken anyway.
+    private static func correcting(_ candidates: [CharacterReading]) -> CharacterReading? {
+        guard let character = candidates.first?.character,
+              let wanted = HeteronymRules.defaultReading(
+                  for: Headword(simplified: String(character), traditional: nil),
+              ),
+              let corrected = candidates.first(where: {
+                  $0.numeric.caseInsensitiveCompare(wanted) == .orderedSame
+              })
+        else { return candidates.first }
+        return corrected
     }
 }

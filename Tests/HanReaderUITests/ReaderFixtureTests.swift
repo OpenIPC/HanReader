@@ -42,9 +42,14 @@ struct ReaderFixtureTests {
     /// lines would differ in height according to dictionary coverage.
     @Test("Contains at least one word with no reading")
     func coversAWordWithNoReading() {
-        let readings = ReaderFixtures.readingsByWord
+        let readings = ReaderFixtures.readings(for: document)
         let words = document.blocks.flatMap(\.tokens).filter(\.isLookupCandidate)
-        #expect(words.contains { readings[$0.text] == nil })
+        // Asked the way the surface asks, so a fixture word that has a
+        // reading but under a different context still counts as uncovered —
+        // which is what the renderer would see.
+        #expect(words.contains { token in
+            !readings.contains { $0.key.word == token.text }
+        })
     }
 
     @Test("Every fixture reading is actually used")
