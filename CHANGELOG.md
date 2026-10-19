@@ -11,6 +11,21 @@ it needs to read like release notes rather than a commit log.
 
 ## [Unreleased]
 
+### Added
+
+- Per-text audio. Attach a narration to any text and it plays in a transport
+  below the reader, with a scrubber, ten-second skips, five speeds and lock
+  screen and Control Centre controls. The playhead is remembered, so the next
+  launch resumes mid-sentence rather than at the top. Tapping a word pauses
+  the narration while the word is spoken and resumes it afterwards — the
+  attached audio is usually the same narration, so hearing both is confusing
+  — and audio paused deliberately stays paused. Unplugging headphones pauses
+  rather than playing to the room.
+- Libraries from the prototype are migrated on first launch: texts, revealed
+  words split out of the newline-joined string they were packed into, and
+  which text was open last. The old file is kept under a new name rather than
+  deleted.
+
 ### Fixed
 
 - Readings for heteronyms now take the surrounding words into account. 重 in

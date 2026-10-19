@@ -10,7 +10,6 @@ import HanReaderCore
 /// `AVAudioSession` category, interruption handling and route-change handling,
 /// while macOS requires none of it.
 ///
-/// - Note: This is scaffolding. Playback arrives in milestone M7.
 public enum HanReaderPlayback {
     /// Proves at compile time that this module links `HanReaderCore`.
     public static let coreVersion = HanReaderCore.version

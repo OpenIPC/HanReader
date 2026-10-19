@@ -12,9 +12,18 @@ import SwiftUI
 /// reset code here: there is nothing to reset.
 struct ReaderScreen: View {
     let textID: TextID
+    /// For the transport and the lock screen. Passed in rather than queried:
+    /// the sidebar already has it, and a second read to label a control the
+    /// reader is looking at is a read too many.
+    let title: String
     let services: AppServices
     let settings: Settings
     let speech: SpeechModel
+    /// Scene-scoped, so one window's narration is not another's. Passed in
+    /// rather than owned here: a model created per text would stop and
+    /// restart the transport every time the reader changed the font size.
+    let playback: PlaybackModel
+    let nowPlaying: NowPlayingController
 
     /// Changes when the dictionaries do, so the model — which caches
     /// readings and definitions — is rebuilt against the new ones.
@@ -22,6 +31,13 @@ struct ReaderScreen: View {
 
     @State private var model: ReaderModel?
     @State private var isInspectorPresented = false
+    @State private var isAudioImporterPresented = false
+    /// Whether this text has a narration, which decides whether the
+    /// transport is on screen at all.
+    @State private var hasAudio = false
+    /// What was last written, so a periodic flush can tell whether anything
+    /// has moved since.
+    @State private var lastSavedPlayhead = 0.0
 
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.scenePhase) private var scenePhase
@@ -54,6 +70,12 @@ struct ReaderScreen: View {
                 // sidebar would leave the old text's work running and its
                 // position unwritten.
                 if let previous = model {
+                    // The playhead belongs to the text that is leaving, and
+                    // `textID` is already the one arriving — so the id comes
+                    // from the outgoing model. Without this, changing text in
+                    // the sidebar lost the playhead silently, which is the
+                    // prototype's behaviour this milestone exists to fix.
+                    await savePlayhead(for: previous.textID)
                     await previous.close()
                 }
                 speech.stop()
@@ -64,21 +86,77 @@ struct ReaderScreen: View {
                 )
                 model = next
                 await next.load()
+                await loadAudio(for: next)
             }
             .onDisappear {
                 // An utterance outlives the view that started it: the
                 // synthesizer is app-scoped, so without this a word spoken
                 // in one text carries on into the next.
                 speech.stop()
+                // Read before unloading, which resets it.
+                let outgoing = textID
                 let model = model
-                Task { await model?.close() }
+                // The transport is scene-scoped but the track is not: the
+                // next text has its own, and a lock screen still naming the
+                // last one is worse than an empty one.
+                let pending = pendingPlayhead()
+                playback.unload()
+                nowPlaying.detach()
+                Task {
+                    await write(pending, for: outgoing)
+                    await model?.close()
+                }
             }
             .onChange(of: scenePhase) { _, phase in
                 // The position save is debounced, so going to the background
                 // with one in flight loses it. On iOS the app may not be
                 // running again afterwards to write it.
                 guard phase != .active, let model else { return }
-                Task { await model.flushPosition() }
+                Task {
+                    await model.flushPosition()
+                    await savePlayhead(for: textID)
+                }
+            }
+            // The playhead is written while the reader is using the app, not
+            // only when they leave it. macOS delivers neither a scene-phase
+            // change nor `onDisappear` reliably on quit, so a transport that
+            // saved only on teardown saved nothing at all — which is exactly
+            // the prototype's bug wearing a different hat.
+            .onChange(of: playback.isPlaying) { _, playing in
+                guard !playing else { return }
+                Task { await savePlayhead(for: textID) }
+            }
+            .onChange(of: playback.observedTime) { _, time in
+                // And periodically while playing, so quitting mid-sentence
+                // costs seconds rather than the session. `observedTime` is
+                // already throttled to once a second, so this is a comparison
+                // once a second and a write once a minute.
+                guard playback.isPlaying,
+                      abs(time - lastSavedPlayhead) >= Self.playheadSaveInterval
+                else { return }
+                lastSavedPlayhead = time
+                Task { await savePlayhead(for: textID) }
+            }
+            .onChange(of: speech.isSpeaking) { _, speaking in
+                // Resumed when the utterance ends rather than after a guessed
+                // delay. `resumeAfterSpeech` only acts if it was this that
+                // paused the audio, so a reader who had already paused it
+                // does not find it playing again.
+                if !speaking, settings.pausesAudioWhileSpeaking {
+                    playback.resumeAfterSpeech()
+                }
+            }
+            .fileImporter(
+                isPresented: $isAudioImporterPresented,
+                allowedContentTypes: AudioAttachment.contentTypes,
+            ) { result in
+                switch result {
+                case let .success(url):
+                    Task { await attachAudio(url) }
+                case let .failure(error):
+                    hasAudio = true
+                    playback.fail(error.localizedDescription)
+                }
             }
             .toolbar { toolbar }
             .alert(
@@ -137,7 +215,7 @@ struct ReaderScreen: View {
             onTap: { id in
                 model.tap(id)
                 if settings.speaksOnTap, let token = model.document?[id] {
-                    speech.speak(token.text, suppressed: voiceOverEnabled)
+                    speak(token.text)
                 }
             },
             topBlock: $model.topBlock,
@@ -147,9 +225,18 @@ struct ReaderScreen: View {
                 state: model.detail,
                 style: style,
                 onExpand: { isInspectorPresented = true },
-                onSpeak: { speech.speak($0, suppressed: voiceOverEnabled) },
+                onSpeak: { speak($0) },
             )
         })
+        // The transport sits below everything, including the detail panel,
+        // and only when the text actually has a narration — an empty
+        // transport is a control that does nothing, which is worse than no
+        // control.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if hasAudio {
+                AudioBar(model: playback, title: title)
+            }
+        }
         // One modifier for both platforms. On a regular width this is a side
         // panel; on a compact one SwiftUI presents it as a sheet by itself,
         // which is exactly the behaviour wanted and needs no `#if os(`.
@@ -158,7 +245,7 @@ struct ReaderScreen: View {
                 WordDetailContent(
                     detail: detail,
                     style: style,
-                    onSpeak: { speech.speak($0, suppressed: voiceOverEnabled) },
+                    onSpeak: { speak($0) },
                     dictionaryNames: services.dictionaryNames,
                 )
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 480)
@@ -171,8 +258,23 @@ struct ReaderScreen: View {
         }
     }
 
+    /// How far the playhead must move before it is written again while
+    /// playing. A minute of narration is a tolerable amount to lose to a
+    /// crash, and a write a minute is nothing.
+    static let playheadSaveInterval = 60.0
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                isAudioImporterPresented = true
+            } label: {
+                Label(
+                    hasAudio ? "Replace audio" : "Add audio",
+                    systemImage: hasAudio ? "waveform.circle.fill" : "waveform.circle",
+                )
+            }
+        }
         ToolbarItem {
             Picker(selection: Binding(
                 get: { settings.wordSpacing },
@@ -202,6 +304,101 @@ struct ReaderScreen: View {
             .keyboardShortcut("-", modifiers: .command)
             .disabled(settings.fontSize <= ReaderStyle.fontSizeRange.lowerBound)
         }
+    }
+}
+
+/// The narration: finding it, attaching it, and keeping the spoken word
+/// from talking over it.
+///
+/// An extension because it is one coherent concern that arrived whole in
+/// M7, and because the screen's own body is the reading surface rather than
+/// the transport.
+extension ReaderScreen {
+    // MARK: - Audio
+
+    /// Finds this text's narration, if it has one, and parks it where the
+    /// reader left off.
+    private func loadAudio(for model: ReaderModel) async {
+        do {
+            guard let track = try await services.library.audioTrack(for: textID) else {
+                hasAudio = false
+                playback.unload()
+                return
+            }
+            let file = AudioAttachment.file(for: track, in: services.locations)
+            guard FileManager.default.fileExists(atPath: file.path) else {
+                // The row outlived its file. Said plainly rather than shown
+                // as a transport that does nothing when pressed.
+                hasAudio = true
+                playback.fail("The audio file for this text is missing.")
+                return
+            }
+            hasAudio = true
+            lastSavedPlayhead = model.storedAudioTime ?? 0
+            playback.load(file, startingAt: model.storedAudioTime)
+            nowPlaying.attach(to: playback, title: title)
+        } catch {
+            Log.error("reader", "could not read the audio track: \(error)")
+            hasAudio = false
+        }
+    }
+
+    /// The playhead worth storing, or nil when there is nothing to store.
+    ///
+    /// Read synchronously, because every caller is about to unload the
+    /// transport or hand it to another text — and `unload()` resets it.
+    private func pendingPlayhead() -> Double? {
+        guard hasAudio, playback.state == .ready else { return nil }
+        return playback.playhead
+    }
+
+    /// Writes the playhead, so the next launch resumes mid-sentence rather
+    /// than at the top. The prototype lost this on every relaunch.
+    ///
+    /// Called at every point the transport stops being this text's: a scene
+    /// going inactive, the reader choosing another text, the window closing.
+    /// Saving only on the first of those was its own version of the bug —
+    /// changing text in the sidebar is the commonest of the three.
+    private func savePlayhead(for id: TextID) async {
+        await write(pendingPlayhead(), for: id)
+    }
+
+    private func write(_ time: Double?, for id: TextID) async {
+        guard let time else { return }
+        do {
+            lastSavedPlayhead = time
+            try await services.library.saveAudioTime(time, for: id)
+        } catch {
+            Log.error("reader", "could not save the playhead: \(error)")
+        }
+    }
+
+    private func attachAudio(_ url: URL) async {
+        do {
+            let file = try await AudioAttachment.attach(
+                url,
+                to: textID,
+                in: services.locations,
+                library: services.library,
+            )
+            hasAudio = true
+            playback.load(file)
+            nowPlaying.attach(to: playback, title: title)
+        } catch {
+            Log.error("reader", "could not attach audio: \(error)")
+            hasAudio = true
+            playback.fail(error.localizedDescription)
+        }
+    }
+
+    /// Speaks a word, ducking the narration first if the reader asked for
+    /// that — which is the default, because the attached audio is usually
+    /// the same narration and hearing both is confusing.
+    private func speak(_ word: String) {
+        if settings.pausesAudioWhileSpeaking {
+            playback.pauseForSpeech()
+        }
+        speech.speak(word, suppressed: voiceOverEnabled)
     }
 }
 

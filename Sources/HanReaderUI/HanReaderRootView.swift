@@ -135,6 +135,12 @@ private struct LibraryAndReader: View {
     /// abandon a running import.
     @State private var dictionaryImport: DictionaryImportModel
     @State private var library: LibraryModel
+    /// Scene-scoped: one transport per window, so two windows reading two
+    /// texts play two narrations and closing a window stops its own. The
+    /// prototype had one player per window-sized model, which was the same
+    /// thing by accident rather than by design.
+    @State private var playback = PlaybackModel()
+    @State private var nowPlaying = NowPlayingController()
     @State private var importer: TextImporter
     @State private var isFileImporterPresented = false
     @State private var duplicateNotice = false
@@ -192,9 +198,12 @@ private struct LibraryAndReader: View {
             if let selection {
                 ReaderScreen(
                     textID: selection,
+                    title: library.items.first { $0.id == selection }?.title ?? "",
                     services: services,
                     settings: settings,
                     speech: speech,
+                    playback: playback,
+                    nowPlaying: nowPlaying,
                     // Part of the reader's identity, so an imported
                     // dictionary reaches a text that is already open rather
                     // than waiting for the next launch.
