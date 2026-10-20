@@ -1,5 +1,6 @@
 // HanReader — MIT licensed. See LICENSE.
 
+import HanReaderCore
 import SwiftUI
 
 /// Colour roles for the reading surface.
@@ -25,6 +26,34 @@ nonisolated enum ReaderColor {
     static let approximateRuby = Color.secondary.opacity(0.65)
     /// Punctuation and whitespace, which are never looked up.
     static let inertText = Color.primary.opacity(0.75)
+
+    /// A phrase nobody has tried yet, one they have passed, one that still
+    /// needs work.
+    static let untried = Color.secondary.opacity(0.3)
+    static let passed = Color.green.opacity(0.7)
+    static let needsWork = Color.orange.opacity(0.8)
+
+    /// How a marked character is coloured.
+    ///
+    /// Three distinct colours for the three kinds of wrong, because that
+    /// distinction is the point of the screen: a homophone is the learner's
+    /// input method, a tone slip is their ear for tones, and a mishearing
+    /// is their ear. Flattening them to one red would throw away the only
+    /// thing this tells them that a plain diff could not.
+    static func dictation(_ outcome: DictationOutcome) -> Color {
+        switch outcome {
+        case .correct: .primary
+        case .homophone: .blue
+        case .toneSlip: .purple
+        case .misheard: .red
+        case .missing: .orange
+        case .extra: .secondary
+        }
+    }
+
+    static func dictationFill(_ outcome: DictationOutcome) -> Color {
+        outcome == .correct ? .clear : dictation(outcome).opacity(0.14)
+    }
 
     /// The fill behind a highlighted token.
     ///

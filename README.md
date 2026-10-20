@@ -28,7 +28,13 @@ separate window:
   it never jumps as you move from word to word.
 - **Hear it.** Tapping a word speaks it.
 - **Follow along with audio.** Attach a narration file to a text and scrub it at
-  0.75× to 1.5×. *(Arrives in M7.)*
+  0.75× to 1.5×.
+- **Practise listening and dictation (听力 / 听写).** HanReader listens to the
+  narration once, on this device, to work out where each sentence is said. Then
+  it plays one sentence at a time — repeated as many times as you like, with a
+  gap to write in — and marks what you typed against what was said, character
+  by character. A wrong character that *sounds* the same is told apart from one
+  you misheard, and from one whose tone you missed.
 - **Two reading modes** — visibly word-segmented, or continuous as it would
   actually be printed.
 - **It remembers.** Your position and the words you have revealed survive
@@ -107,6 +113,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M5** — **the macOS reader: first usable version**
 - [x] **M6** — **BKRS DSL import**
 - [x] **M7** — **audio playback**
+- [ ] **M11** — **listening and dictation practice (听力 / 听写)** — practice screen done, phrase-boundary editor to come
 - [ ] **M8** — iOS and iPadOS
 - [ ] **M9** — accessibility and Russian localization
 - [ ] **M10** — 1.0

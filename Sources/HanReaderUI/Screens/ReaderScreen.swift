@@ -32,6 +32,7 @@ struct ReaderScreen: View {
     @State private var model: ReaderModel?
     @State private var isInspectorPresented = false
     @State private var isAudioImporterPresented = false
+    @State private var isPractising = false
     /// Whether this text has a narration, which decides whether the
     /// transport is on screen at all.
     @State private var hasAudio = false
@@ -168,6 +169,19 @@ struct ReaderScreen: View {
                 }
             }
             .toolbar { toolbar }
+            // A sheet rather than a mode of the reader. Practice hides the
+            // text, which is the opposite of what the reader is for, and
+            // the two sharing a surface would mean every change to one
+            // reasoning about the other.
+            .sheet(isPresented: $isPractising) {
+                PracticeSheet(
+                    textID: textID,
+                    title: title,
+                    services: services,
+                    playback: playback,
+                    style: style,
+                )
+            }
             .alert(
                 "No Chinese voice is installed",
                 isPresented: Binding(
@@ -274,6 +288,15 @@ struct ReaderScreen: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                isPractising = true
+            } label: {
+                Label("Listening practice", systemImage: "headphones")
+            }
+            .disabled(!hasAudio)
+            .help("Hear one sentence at a time and type what you heard.")
+        }
         ToolbarItem {
             Button {
                 isAudioImporterPresented = true

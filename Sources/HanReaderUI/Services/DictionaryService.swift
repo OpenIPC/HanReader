@@ -38,6 +38,9 @@ actor DictionaryService {
     /// occurrence in the book.
     private var readingCache: BoundedCache<ReadingRequest, TokenReading?>
     private var entryCache: BoundedCache<String, [DictionaryEntry]>
+    /// Small: there are only so many characters, and a dictation marks a
+    /// few dozen at a time.
+    private var characterCache = BoundedCache<Character, [CharacterReading]>(capacity: 2048)
 
     /// Whether a database read has already failed.
     ///
@@ -135,6 +138,38 @@ actor DictionaryService {
             }
         readingCache.insert(reading, forKey: request)
         return reading
+    }
+
+    /// What a character sounds like, for marking a dictation.
+    ///
+    /// Cached like everything else here, and for the same reason: checking
+    /// one attempt asks about every character the reader got wrong, and the
+    /// ones they get wrong are the ones they will get wrong again.
+    func readings(forCharacter character: Character) -> [CharacterReading] {
+        if let cached = characterCache.value(forKey: character) {
+            return cached
+        }
+        let readings = attempt("readings for \(character)", default: []) {
+            try lookup.readings(forCharacter: character)
+        }
+        characterCache.insert(readings, forKey: character)
+        return readings
+    }
+
+    /// What each of these characters sounds like, in one go.
+    ///
+    /// A batch because this is an actor and marking a dictation asks about
+    /// every character the reader got wrong: one hop for the lot rather
+    /// than one per character, which is the same reason `readings(for:)`
+    /// takes a window of words rather than a word.
+    func readings(forCharacters characters: some Sequence<Character>)
+        -> [Character: [CharacterReading]]
+    {
+        var result: [Character: [CharacterReading]] = [:]
+        for character in characters where result[character] == nil {
+            result[character] = readings(forCharacter: character)
+        }
+        return result
     }
 
     // MARK: - Entries
