@@ -59,7 +59,14 @@ struct PracticeScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     PhraseTransport(model: model, playback: playback)
-                    writing
+                    if model.tapping != nil {
+                        TapAlongBar(model: model, style: style)
+                    } else {
+                        if model.isEditing {
+                            BoundaryEditor(model: model, style: style)
+                        }
+                        writing
+                    }
                     if let result = model.result {
                         DictationMarkedView(
                             result: result,
@@ -131,6 +138,18 @@ struct PracticeScreen: View {
         ToolbarItem {
             DrillMenu(model: model)
         }
+        ToolbarItem {
+            Button {
+                if model.isEditing {
+                    Task { await model.stopEditing() }
+                } else {
+                    model.startEditing()
+                }
+            } label: {
+                Label("Edit boundaries", systemImage: "waveform.path")
+            }
+            .help("Drag where this phrase starts and ends.")
+        }
     }
 }
 
@@ -152,8 +171,18 @@ private struct AlignmentInvitation: View {
             not sent anywhere.
             """)
         } actions: {
-            Button("Listen to the recording") { model.align() }
-                .buttonStyle(.borderedProminent)
+            VStack(spacing: 8) {
+                Button("Listen to the recording") { model.align() }
+                    .buttonStyle(.borderedProminent)
+                // Offered here too, not only after something has gone
+                // wrong: a reader who already knows the recogniser cannot
+                // follow this recording should not have to wait for it to
+                // fail before they can do it themselves.
+                Button("Place the phrases myself") {
+                    Task { await model.splitWithoutListening() }
+                }
+                .font(.caption)
+            }
         }
     }
 }
@@ -200,9 +229,23 @@ private struct AlignmentObstacleView: View {
         } description: {
             Text(verbatim: explanation)
         } actions: {
-            if obstacle.canInstall {
-                Button("Download the model") { model.align(installingModel: true) }
-                    .buttonStyle(.borderedProminent)
+            VStack(spacing: 8) {
+                if obstacle.canInstall {
+                    Button("Download the model") { model.align(installingModel: true) }
+                        .buttonStyle(.borderedProminent)
+                }
+                // Always offered, including when the model could be
+                // installed: a reader who will not download several hundred
+                // megabytes should still be able to practise, and this is
+                // the path that always works.
+                let myself = Button("Place the phrases myself") {
+                    Task { await model.splitWithoutListening() }
+                }
+                if obstacle.canInstall {
+                    myself.buttonStyle(.bordered)
+                } else {
+                    myself.buttonStyle(.borderedProminent)
+                }
             }
         }
     }
@@ -226,8 +269,8 @@ private struct AlignmentObstacleView: View {
             """
         case .systemTooOld:
             """
-            Finding phrases automatically needs macOS 26 or later. Placing \
-            them by hand is not possible yet.
+            Finding phrases automatically needs macOS 26 or later. You can \
+            still practise by placing the phrase boundaries yourself.
             """
         case .languageUnsupported:
             "This system has no Chinese speech recognition to offer."

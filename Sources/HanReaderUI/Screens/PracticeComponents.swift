@@ -190,3 +190,60 @@ struct GradeRow: View {
         }
     }
 }
+
+/// Tapping the phrase boundaries in while the recording plays.
+///
+/// The path for a system with no Chinese speech recognition, and the repair
+/// for a recording the recogniser could not follow. It is a few dozen lines
+/// and it is always exactly right, which is why it is here rather than a
+/// second alignment algorithm guessing from silence.
+struct TapAlongBar: View {
+    let model: PracticeModel
+    let style: ReaderStyle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Press Mark as each phrase begins.")
+                    .font(.callout.weight(.medium))
+                Text("⌘↩")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            if let next = model.upcoming {
+                Text(verbatim: next.text(in: model.content))
+                    .font(ReaderFont.base(style))
+                    .lineLimit(2)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                // ⌘↩ rather than the obvious ⌘M: that is the system's
+                // Minimize, and a view's shortcut competing with a menu
+                // command is a fight to lose. ⌘↩ is free here — the writing
+                // field is not on screen while this is — and it already
+                // means "commit this" everywhere else on the screen.
+                Button("Mark") {
+                    Task { await model.tapBoundary() }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+
+                if let tapping = model.tapping {
+                    Text(verbatim: "\(tapping.next) / \(model.phrases.count - 1)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Stop", role: .cancel) {
+                    Task { await model.cancelTapAlong() }
+                }
+                .font(.caption)
+            }
+        }
+        .padding(ReaderMetrics.readingColumnPadding / 2)
+        .background {
+            RoundedRectangle(cornerRadius: ReaderMetrics.tokenCornerRadius)
+                .fill(ReaderColor.highlightWash)
+        }
+    }
+}

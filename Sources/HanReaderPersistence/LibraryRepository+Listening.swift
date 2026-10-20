@@ -126,17 +126,23 @@ extension LibraryRepository {
     /// Marked `manual` so a later re-alignment can leave it alone. Only the
     /// times change: dragging a boundary in the waveform says nothing about
     /// which words belong to the phrase.
+    /// - Parameter origin: `manual` for a boundary somebody placed, which is
+    ///   every drag and every tap. Pass `recognised` only for times that
+    ///   were shuffled around on a reader's behalf rather than chosen by
+    ///   them — the phrases nobody reached while tapping along — or a later
+    ///   re-alignment will preserve a guess as though it were a decision.
     public func movePhrase(
         _ index: Int,
         in id: TextID,
         start: Double,
         end: Double,
+        origin: PhraseOrigin = .manual,
     ) async throws {
         try await dbQueue.write { db in
             try db.execute(sql: """
                 UPDATE phrase SET startTime = ?, endTime = ?, origin = ?
                 WHERE textId = ? AND idx = ?
-            """, arguments: [start, end, PhraseOrigin.manual.rawValue, id.rawValue, index])
+            """, arguments: [start, end, origin.rawValue, id.rawValue, index])
         }
     }
 

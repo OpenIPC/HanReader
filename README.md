@@ -113,7 +113,7 @@ framework imports. Details in [`Docs/ARCHITECTURE.md`](Docs/ARCHITECTURE.md).
 - [x] **M5** — **the macOS reader: first usable version**
 - [x] **M6** — **BKRS DSL import**
 - [x] **M7** — **audio playback**
-- [ ] **M11** — **listening and dictation practice (听力 / 听写)** — practice screen done, phrase-boundary editor to come
+- [x] **M11** — **listening and dictation practice (听力 / 听写)**
 - [ ] **M8** — iOS and iPadOS
 - [ ] **M9** — accessibility and Russian localization
 - [ ] **M10** — 1.0

@@ -32,6 +32,17 @@ it needs to read like release notes rather than a commit log.
 - Sentences can be graded easy, middling or hard, and a filter drills only the
   ones still worth drilling: graded hard, never attempted, or last attempted
   below the pass mark.
+- Phrase boundaries can be corrected by hand. The practice screen draws the
+  recording's shape around the sentence you are on — the only waveform in the
+  app — and its start and end are draggable. A boundary you place is kept when
+  the recording is listened to again, so a correction is made once rather than
+  every time.
+- A recording can be divided without any speech recognition at all: the text is
+  split into sentences, the recording plays once, and you press Mark as each
+  one begins. That is the path for a Mac older than macOS 26, for a system with
+  no Chinese speech model, and for anyone who would rather not download several
+  hundred megabytes. It is also the quickest repair when a recogniser has
+  simply failed to follow a recording.
 - Per-text audio. Attach a narration to any text and it plays in a transport
   below the reader, with a scrubber, ten-second skips, five speeds and lock
   screen and Control Centre controls. The playhead is remembered, so the next
