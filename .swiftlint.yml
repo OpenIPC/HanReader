@@ -118,6 +118,14 @@ custom_rules:
     message: "AppKit/UIKit belongs in HanReaderPlatform only."
     severity: error
 
+  no_speech_outside_playback:
+    name: "Speech outside HanReaderPlayback"
+    included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderDictionaryImport|HanReaderTokenization|HanReaderPlatform)/.*\\.swift"
+    regex: '^\s*(@[A-Za-z_][A-Za-z0-9_]*\s+)*((public|package|internal|private|fileprivate)\s+)?import\s+((typealias|struct|class|enum|protocol|func|let|var)\s+)?Speech\b'
+    excluded_match_kinds: [comment, doccomment, string]
+    message: "Speech belongs in HanReaderPlayback; go through HanReaderCore.RecognisedSpeech."
+    severity: error
+
   no_naturallanguage_outside_tokenization:
     name: "NaturalLanguage outside HanReaderTokenization"
     included: ".*/Sources/(HanReaderCore|HanReaderUI|HanReaderPersistence|HanReaderDictionaryImport|HanReaderPlayback|HanReaderPlatform)/.*\\.swift"
