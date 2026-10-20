@@ -219,7 +219,7 @@ public final class PlaybackModel {
         playhead = start
         observedTime = start
         if start > 0 {
-            engine.seek(to: start)
+            engine.seek(to: start, exactly: false)
         }
         engine.setRate(rate.rawValue)
         onStateChange?()
@@ -322,7 +322,7 @@ public final class PlaybackModel {
             self.segment = nil
             engine.setStopTime(nil)
         }
-        engine.seek(to: target)
+        engine.seek(to: target, exactly: segment != nil)
         playhead = target
         // Published immediately rather than left to the next report, or the
         // thumb springs back to where it was for a quarter of a second.

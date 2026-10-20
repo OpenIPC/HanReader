@@ -137,7 +137,7 @@ final class SilentEngine: AudioEngine {
     func load(_: URL) {}
     func play() {}
     func pause() {}
-    func seek(to _: Double) {}
+    func seek(to _: Double, exactly _: Bool) {}
     func setRate(_: Double) {}
     func setStopTime(_: Double?) {}
 }

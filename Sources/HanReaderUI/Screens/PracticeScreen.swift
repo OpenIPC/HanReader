@@ -1,6 +1,7 @@
 // HanReader — MIT licensed. See LICENSE.
 
 import HanReaderCore
+import HanReaderPlatform
 import HanReaderPlayback
 import SwiftUI
 
@@ -72,6 +73,7 @@ struct PracticeScreen: View {
                             result: result,
                             expected: model.text,
                             style: style,
+                            readings: model.readings,
                         )
                         GradeRow(model: model)
                     } else if model.isRevealed {
@@ -108,13 +110,33 @@ struct PracticeScreen: View {
                     .buttonStyle(.borderless)
                     .font(.caption)
                 Spacer()
-                Text("⌘↩ check · ⌘P play · ⌘→ next")
+                Text("⌘P play · ⌘→ next · ⌘↩ check early")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }
-        .onAppear { isWriting = true }
-        .onChange(of: model.current) { _, _ in isWriting = true }
+        .onAppear {
+            isWriting = true
+            model.playOnArrival()
+        }
+        // Every keystroke on this screen is meant to be Chinese, so the
+        // system is asked for a Chinese input source while the field holds
+        // focus rather than leaving the learner to switch twice a sentence
+        // and find out they forgot after the answer is marked wrong.
+        .onChange(of: isWriting) { _, writing in
+            writing ? ChineseInput.prefer() : ChineseInput.clearPreference()
+        }
+        .onChange(of: model.current) { _, _ in
+            isWriting = true
+            model.playOnArrival()
+        }
+        // Typing is the whole interaction. The answer is marked as soon as
+        // it is as long as the sentence, and a correct one moves on by
+        // itself — Check and Next phrase stay for the times that is not
+        // what was wanted.
+        .onChange(of: model.typed) { _, _ in
+            Task { await model.answerChanged() }
+        }
     }
 
     private var revealed: some View {

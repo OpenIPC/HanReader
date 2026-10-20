@@ -11,6 +11,8 @@ import Foundation
 @MainActor
 final class SpyEngine: AudioEngine {
     private(set) var seeks: [Double] = []
+    /// Whether each seek asked to land exactly, which is what a phrase needs.
+    private(set) var exactSeeks: [Bool] = []
     private(set) var playCount = 0
     private(set) var pauseCount = 0
     private(set) var rates: [Double] = []
@@ -36,8 +38,9 @@ final class SpyEngine: AudioEngine {
         pauseCount += 1
     }
 
-    func seek(to time: Double) {
+    func seek(to time: Double, exactly: Bool) {
         seeks.append(time)
+        exactSeeks.append(exactly)
         currentTime = time
     }
 
