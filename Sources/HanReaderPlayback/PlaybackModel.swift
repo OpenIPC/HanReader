@@ -44,7 +44,7 @@ public final class PlaybackModel {
     }
 
     public private(set) var state: State = .empty
-    public private(set) var isPlaying = false
+    public internal(set) var isPlaying = false
     public private(set) var duration = 0.0
 
     /// The playhead, published **at most once a second**.
@@ -53,7 +53,7 @@ public final class PlaybackModel {
     /// prototype published every tick straight to the main actor, so the
     /// thread laying out CJK text was woken ten times a second to render a
     /// string that had not changed.
-    public private(set) var observedTime = 0.0
+    public internal(set) var observedTime = 0.0
 
     /// Where the reader's finger is, while it is down.
     ///
@@ -72,6 +72,46 @@ public final class PlaybackModel {
         scrubTime != nil
     }
 
+    /// The span being practised, or nil when the whole recording is playing.
+    ///
+    /// The setter is internal rather than private because phrase playback
+    /// lives in its own file, and Swift's `private` reaches extensions in
+    /// the same file only. Still closed to callers outside this module,
+    /// which is the boundary that matters.
+    public internal(set) var segment: Range<Double>?
+
+    /// How a phrase is drilled: how many times through, and how long a gap
+    /// to leave after each.
+    ///
+    /// The gap is the whole point of a drill and the reason this is not just
+    /// a loop: it is where the learner says the phrase back, or writes it.
+    /// WorkAudioBook spells the same two settings out as "repeat phrase" and
+    /// "pause between phrases".
+    public struct Drill: Hashable, Sendable {
+        public var repeats: Int
+        public var gap: Double
+
+        public init(repeats: Int = 1, gap: Double = 0) {
+            self.repeats = max(1, repeats)
+            self.gap = max(0, gap)
+        }
+
+        /// Once through, no gap: pressing play on a phrase.
+        public static let once = Self()
+    }
+
+    public var drill = Drill.once
+
+    /// Called when a phrase has been played as many times as the drill asks.
+    ///
+    /// The transport deliberately does not advance by itself. Which phrase
+    /// comes next is a question about the text and about what the reader has
+    /// already passed, and neither belongs down here.
+    public var onSegmentFinished: (() -> Void)?
+
+    @ObservationIgnored var repeatsPlayed = 0
+    @ObservationIgnored var drillTask: Task<Void, Never>?
+
     public var rate: PlaybackRate = .normal {
         didSet {
             guard rate != oldValue else { return }
@@ -88,7 +128,7 @@ public final class PlaybackModel {
     /// The exact playhead, for persistence. Not the published one, which is
     /// rounded to the second for the display's benefit; a reader who stops
     /// mid-sentence should resume mid-sentence.
-    @ObservationIgnored public private(set) var playhead = 0.0
+    @ObservationIgnored public internal(set) var playhead = 0.0
 
     /// True when playback was stopped by something other than the reader —
     /// a phone call, headphones unplugged, a word being spoken — so it can be
@@ -104,7 +144,7 @@ public final class PlaybackModel {
     /// Paused by the system — a call, an alarm, another app.
     @ObservationIgnored private var pausedByInterruption = false
 
-    @ObservationIgnored private let engine: any AudioEngine
+    @ObservationIgnored let engine: any AudioEngine
     @ObservationIgnored private let session: any PlaybackSession
     @ObservationIgnored private var hasActivatedSession = false
 
@@ -173,6 +213,9 @@ public final class PlaybackModel {
         playhead = 0
         scrubTime = nil
         clearPauseReasons()
+        cancelDrill()
+        segment = nil
+        engine.setStopTime(nil)
         deactivateSession()
         onStateChange?()
     }
@@ -203,7 +246,16 @@ public final class PlaybackModel {
     }
 
     public func pause() {
-        guard isPlaying else { return }
+        // Before the guard, not after it. During the gap between repeats
+        // nothing is playing, so a guard on `isPlaying` returns without
+        // stopping the pending repeat — and the reader presses pause, hears
+        // silence, and then hears the phrase start again. Pausing has to
+        // mean "stop", whether or not sound is coming out at this instant.
+        cancelDrill()
+        guard isPlaying else {
+            onStateChange?()
+            return
+        }
         engine.pause()
         isPlaying = false
         // Deliberate, so neither the system nor a finished utterance may
@@ -333,6 +385,13 @@ public final class PlaybackModel {
     }
 
     private func finish() {
+        // A phrase reaching its own end comes through the same path as a
+        // track reaching the end of the file, because `forwardPlaybackEndTime`
+        // *is* the end of the item as far as the player is concerned.
+        if segment != nil {
+            finishSegmentPass()
+            return
+        }
         engine.pause()
         isPlaying = false
         clearPauseReasons()
@@ -346,7 +405,7 @@ public final class PlaybackModel {
 
     // MARK: - Session
 
-    private func activateSession() {
+    func activateSession() {
         guard !hasActivatedSession else { return }
         do {
             try session.activate()
@@ -362,7 +421,7 @@ public final class PlaybackModel {
         hasActivatedSession = false
     }
 
-    private func clearPauseReasons() {
+    func clearPauseReasons() {
         pausedForSpeech = false
         pausedByInterruption = false
     }

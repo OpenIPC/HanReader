@@ -29,6 +29,12 @@ public protocol AudioEngine: AnyObject {
     /// when not.
     func setRate(_ rate: Double)
 
+    /// Stop here rather than at the end of the track, or nil to play on.
+    ///
+    /// Needed because listening practice plays one phrase, and a phrase that
+    /// runs a quarter-second into the next one has given the answer away.
+    func setStopTime(_ time: Double?)
+
     /// Called about four times a second while playing. What reaches the UI is
     /// throttled further — see `PlaybackModel.report(_:)`.
     var onTime: ((Double) -> Void)? { get set }
@@ -119,6 +125,16 @@ final class AVPlayerAudioEngine: AudioEngine {
 
         let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
+        // Pinned, not fixed. Measured on macOS 26 this is already the
+        // default, so M7 was never shipping a chipmunk voice at 0.75 — a
+        // claim made in the plan and checked only now. What it does buy is
+        // certainty: the documented default has been `.spectral` in the
+        // past, this app also runs on macOS 14 and iOS 17, and a recording
+        // slowed down for a learner must be a slower voice rather than a
+        // deeper one on every one of them. `.timeDomain` is Apple's
+        // recommendation for speech and is what WorkAudioBook bundles
+        // SoundTouch to do.
+        item.audioTimePitchAlgorithm = .timeDomain
         player.replaceCurrentItem(with: item)
 
         finishObserver = NotificationCenter.default.addObserver(
@@ -172,5 +188,22 @@ final class AVPlayerAudioEngine: AudioEngine {
         if player.rate != 0 {
             player.rate = Float(rate)
         }
+    }
+
+    /// `forwardPlaybackEndTime` rather than watching the clock.
+    ///
+    /// The time observer reports four times a second, so stopping by hand
+    /// overshoots by up to 250 ms — audible, and enough to leak the first
+    /// syllable of the next phrase to a learner who is about to be asked to
+    /// transcribe it. The player stops itself at exactly this point and
+    /// reports it as the end of the item, which is the same path a finished
+    /// track already takes.
+    func setStopTime(_ time: Double?) {
+        guard let item = player.currentItem else { return }
+        guard let time else {
+            item.forwardPlaybackEndTime = .invalid
+            return
+        }
+        item.forwardPlaybackEndTime = CMTime(seconds: max(0, time), preferredTimescale: 600)
     }
 }
