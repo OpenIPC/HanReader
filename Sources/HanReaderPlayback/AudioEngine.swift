@@ -24,7 +24,10 @@ public protocol AudioEngine: AnyObject {
     func load(_ url: URL)
     func play()
     func pause()
-    func seek(to time: Double)
+    /// - Parameter exactly: land on the requested time rather than wherever
+    ///   is cheap. Scrubbing a narration does not care; starting a phrase
+    ///   does, because the target *is* the first syllable.
+    func seek(to time: Double, exactly: Bool)
     /// Applied immediately when playing, and remembered for the next `play()`
     /// when not.
     func setRate(_ rate: Double)
@@ -173,13 +176,16 @@ final class AVPlayerAudioEngine: AudioEngine {
         player.pause()
     }
 
-    func seek(to time: Double) {
+    func seek(to time: Double, exactly: Bool) {
         let target = CMTime(seconds: max(0, time), preferredTimescale: 600)
-        // A tolerance, deliberately. The prototype seeked with
-        // `toleranceBefore: .zero, toleranceAfter: .zero`, which forces a
-        // frame-accurate seek — expensive, and pointless for spoken audio
-        // where a tenth of a second is inaudible.
-        let tolerance = CMTime(seconds: 0.1, preferredTimescale: 600)
+        // A tenth of a second is inaudible when the reader is dragging a
+        // scrubber through a narration, and a frame-accurate seek there is
+        // expensive for nothing. It is *not* inaudible at the start of a
+        // phrase: that target is the first syllable, AVPlayer resolves a
+        // tolerance by landing on whichever sync sample is cheapest — in
+        // practice an earlier one — and the reader hears the sentence
+        // begin mid-word.
+        let tolerance = exactly ? .zero : CMTime(seconds: 0.1, preferredTimescale: 600)
         player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
     }
 

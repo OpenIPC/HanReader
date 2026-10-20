@@ -152,6 +152,16 @@ public struct DictationResult: Hashable, Sendable {
 /// for building this inside HanReader rather than using a general-purpose
 /// dictation tool — the readings are already here.
 public enum DictationComparison {
+    /// How many characters of this text count towards a score.
+    ///
+    /// Punctuation and spacing are not the exercise, so they are not in the
+    /// count — which is what lets a screen notice that an answer is as long
+    /// as the sentence without caring whether the learner's input method
+    /// inserted a comma.
+    public static func scorableCount(of text: String) -> Int {
+        scorable(text).count
+    }
+
     /// Compares an attempt against the expected text.
     ///
     /// - Parameter readings: consulted only for characters that did not

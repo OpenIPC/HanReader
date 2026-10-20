@@ -61,6 +61,13 @@ final class PracticeModel {
     var current = 0
     /// The last check, or nil if this phrase has not been answered yet.
     private(set) var result: DictationResult?
+    /// What the characters in the last check sound like.
+    ///
+    /// Kept from the check rather than looked up again by the view: the
+    /// lookup has already happened — marking a homophone is what it is for —
+    /// and a view that fetches is a view that cannot be rendered from a
+    /// value.
+    private(set) var readings: [Character: [CharacterReading]] = [:]
     /// Whether the transcript is on screen. Off until checked, because the
     /// answer being visible is the one thing that makes dictation worthless.
     private(set) var isRevealed = false
@@ -100,6 +107,13 @@ final class PracticeModel {
     /// files, and `private` in Swift reaches extensions in the *same* file
     /// only.
     var waveformTask: Task<Void, Never>?
+    /// A pending move to the next phrase after a correct answer.
+    var advanceTask: Task<Void, Never>?
+    /// How the flow waits, injectable so a test asserts order rather than
+    /// the clock — the lesson the drill's gap already taught.
+    var wait: @MainActor (Double) async -> Void = { seconds in
+        try? await Task.sleep(for: .seconds(seconds))
+    }
 
     init(textID: TextID, services: AppServices, playback: PlaybackModel) {
         self.textID = textID
@@ -148,6 +162,7 @@ final class PracticeModel {
         alignTask = nil
         waveformTask?.cancel()
         waveformTask = nil
+        cancelAdvance()
         // Through the same path the Stop button takes, rather than clearing
         // the flag here: dismissing the sheet part-way through tapping means
         // the same thing as stopping, and two ways to stop is two places to
@@ -205,9 +220,11 @@ final class PracticeModel {
 
     func select(_ index: Int) {
         guard phrases.contains(where: { $0.index == index }) else { return }
+        cancelAdvance()
         current = index
         typed = attempts[index]?.typed ?? ""
         result = nil
+        readings = [:]
         // Hidden again — unless the boundary editor is open, which shows
         // the phrase's text because a boundary cannot be placed without
         // knowing which words it is meant to contain. Leaving the flag
@@ -271,6 +288,7 @@ final class PracticeModel {
             readings: { readings[$0] ?? [] },
         )
         result = outcome
+        self.readings = readings
         isRevealed = true
         // A reader who showed the answer and then copied it has not
         // demonstrated anything about their listening, and recording a pass

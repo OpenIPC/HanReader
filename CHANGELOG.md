@@ -11,6 +11,29 @@ it needs to read like release notes rather than a commit log.
 
 ## [Unreleased]
 
+### Changed
+
+- Listening practice is driven by typing rather than by buttons. The sentence
+  plays as soon as you reach it; your answer is marked the moment it is as long
+  as the sentence; and a correct one moves to the next sentence by itself.
+  Check, Play and Next phrase are all still there for the times that is not
+  what you wanted — they are no longer the way through.
+- Pausing a sentence and starting it again picks up a couple of seconds before
+  where it stopped rather than at the beginning, the way a podcast player does.
+  Starting a long sentence over every time you paused to think made one
+  impossible to finish.
+- The writing field asks the system for a Chinese input source while it has
+  focus, so practising does not mean switching input source twice a sentence.
+- Every character you got wrong now carries its pinyin, beside what you typed —
+  the reading is the thing worth taking away from a mistake.
+
+### Fixed
+
+- Sentences no longer begin mid-word. Phrase playback seeked with a tenth of a
+  second of tolerance, which is inaudible when dragging a scrubber through a
+  narration and very audible when the target is the first syllable of a
+  sentence. It is exact now; scrubbing keeps the tolerance it wants.
+
 ### Added
 
 - Listening and dictation practice (听力 / 听写). A text with a narration opens

@@ -15,6 +15,13 @@ struct DictationMarkedView: View {
     let result: DictationResult
     let expected: String
     let style: ReaderStyle
+    /// What each character sounds like, for the ones that were wrong.
+    ///
+    /// A learner looking at a mistake needs to know what the character they
+    /// missed actually sounds like — that is the thing worth taking away
+    /// from it — and seeing it beside what they typed is what turns "wrong"
+    /// into "those two sound alike, I picked the wrong one".
+    let readings: [Character: [CharacterReading]]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,7 +40,7 @@ struct DictationMarkedView: View {
     private var marks: some View {
         FlowRow(spacing: 2) {
             ForEach(Array(result.marks.enumerated()), id: \.offset) { _, mark in
-                MarkView(mark: mark, style: style)
+                MarkView(mark: mark, style: style, readings: readings)
             }
         }
     }
@@ -111,6 +118,7 @@ struct DictationMarkedView: View {
 private struct MarkView: View {
     let mark: DictationMark
     let style: ReaderStyle
+    let readings: [Character: [CharacterReading]]
 
     var body: some View {
         VStack(spacing: 1) {
@@ -130,9 +138,25 @@ private struct MarkView: View {
                     RoundedRectangle(cornerRadius: ReaderMetrics.tokenCornerRadius)
                         .fill(ReaderColor.dictationFill(mark.outcome))
                 }
+            // And underneath, how the character they missed is said. Only
+            // under the wrong ones: pinyin under every character would be
+            // the reading surface, and this is a marking.
+            Text(verbatim: pinyin)
+                .font(ReaderFont.ruby(style))
+                .foregroundStyle(.secondary)
+                .frame(minHeight: style.rubyReservation)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibility)
+    }
+
+    /// How the expected character is said, or how the typed one is when
+    /// there was nothing to expect.
+    private var pinyin: String {
+        guard mark.outcome != .correct else { return " " }
+        let character = mark.expected ?? mark.typed
+        guard let character, let reading = readings[character]?.first else { return " " }
+        return reading.display
     }
 
     /// A missing character is shown as an underscore rather than omitted:
