@@ -86,6 +86,16 @@ public nonisolated struct SpeechAligner: Sendable {
         await SpeechTranscriber.supportedLocales.contains { $0.matches(locale) }
     }
 
+    /// Every language this system can transcribe.
+    ///
+    /// Exposed so a caller can tell "this machine has no speech support at
+    /// all" from "it has speech support but not for Chinese" — a headless CI
+    /// runner is the first, a Japanese-only install the second, and they
+    /// want different things said to the reader.
+    public static func supportedLanguages() async -> [String] {
+        await SpeechTranscriber.supportedLocales.map { $0.identifier(.bcp47) }
+    }
+
     /// Whether the model is already on the device.
     public func isModelInstalled() async -> Bool {
         await SpeechTranscriber.installedLocales.contains { $0.matches(locale) }

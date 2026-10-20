@@ -15,9 +15,19 @@ import Testing
 /// fresh clone and on CI, which is worse than one that says what it covers.
 @Suite("Speech aligner")
 struct SpeechAlignerTests {
-    @Test("Chinese is a language the system can transcribe")
-    func chineseIsSupported() async {
+    /// Conditional on purpose. A headless CI runner reports *no* supported
+    /// languages at all, so asserting Chinese outright asserts a fact about
+    /// the machine rather than about the code — which is how this test first
+    /// passed here and failed in CI.
+    ///
+    /// What *is* a fact about the code: wherever the system can transcribe
+    /// anything, it can transcribe Chinese, because that is the language
+    /// this app exists for and the one the availability check names.
+    @Test("Where the system transcribes anything, Chinese is among it")
+    func chineseIsSupportedWhereAnythingIs() async {
         guard #available(macOS 26.0, iOS 26.0, *) else { return }
+        let languages = await SpeechAligner.supportedLanguages()
+        guard !languages.isEmpty else { return }
         #expect(await SpeechAligner().isLanguageSupported())
     }
 
