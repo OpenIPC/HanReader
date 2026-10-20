@@ -253,7 +253,7 @@ public enum ForcedAlignment {
     ///
     /// Confidence zero throughout, which is what tells the UI to offer the
     /// boundary editor rather than present these as answers.
-    static func spread(_ phrases: [Range<Int>], across duration: Double) -> [Phrase] {
+    public static func spread(_ phrases: [Range<Int>], across duration: Double) -> [Phrase] {
         guard !phrases.isEmpty else { return [] }
         let slice = (duration > 0 ? duration : 0) / Double(phrases.count)
         return phrases.enumerated().map { index, range in

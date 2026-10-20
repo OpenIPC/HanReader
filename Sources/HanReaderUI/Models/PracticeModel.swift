@@ -51,10 +51,14 @@ final class PracticeModel {
         case needsWork
     }
 
-    private(set) var phase: Phase = .noAudio
-    private(set) var phrases: [Phrase] = []
-    private(set) var attempts: [Int: DictationAttempt] = [:]
-    private(set) var current = 0
+    // Settable from this module rather than `private(set)`, because this
+    // type's implementation spans files — `private` in Swift reaches
+    // extensions in the *same* file only — and the boundary editor lives in
+    // one of them. Nothing outside the module can see any of it.
+    var phase: Phase = .noAudio
+    var phrases: [Phrase] = []
+    var attempts: [Int: DictationAttempt] = [:]
+    var current = 0
     /// The last check, or nil if this phrase has not been answered yet.
     private(set) var result: DictationResult?
     /// Whether the transcript is on screen. Off until checked, because the
@@ -65,13 +69,25 @@ final class PracticeModel {
     var filter: Filter = .all
     var drill = PlaybackModel.Drill.once
 
+    /// Whether the boundary editor is open.
+    var isEditing = false
+    /// The recording's shape, read once the editor is first opened.
+    var peaks = WaveformPeaks.empty
+    var isReadingWaveform = false
+    /// Where the reader is up to when tapping boundaries in by hand, or nil
+    /// when they are not.
+    var tapping: TapAlong?
+
     let textID: TextID
-    private let services: AppServices
-    private let playback: PlaybackModel
-    private var content = ""
-    private var alignTask: Task<Void, Never>?
+    let services: AppServices
+    let playback: PlaybackModel
+    private(set) var content = ""
+    /// The narration, kept so the boundary editor can find the file without
+    /// going back to the database for it.
+    var audioTrack: AudioTrack?
+    var alignTask: Task<Void, Never>?
     /// Where the narration was before practice took the transport over.
-    private var resumeAt: Double?
+    var resumeAt: Double?
     /// Which alignment run is the current one.
     ///
     /// A cancelled task keeps running until its next suspension point, and
@@ -79,7 +95,11 @@ final class PracticeModel {
     /// stopped run finishing late can clear the handle of the run that
     /// replaced it — leaving a second alignment going that nothing can
     /// stop.
-    private var alignGeneration = 0
+    var alignGeneration = 0
+    /// Internal rather than private because this type's implementation spans
+    /// files, and `private` in Swift reaches extensions in the *same* file
+    /// only.
+    var waveformTask: Task<Void, Never>?
 
     init(textID: TextID, services: AppServices, playback: PlaybackModel) {
         self.textID = textID
@@ -100,6 +120,7 @@ final class PracticeModel {
                 phase = .noAudio
                 return
             }
+            audioTrack = track
             let file = AudioAttachment.file(for: track, in: services.locations)
             guard FileManager.default.fileExists(atPath: file.path) else {
                 phase = .noAudio
@@ -125,6 +146,13 @@ final class PracticeModel {
     func close() async {
         alignTask?.cancel()
         alignTask = nil
+        waveformTask?.cancel()
+        waveformTask = nil
+        // Through the same path the Stop button takes, rather than clearing
+        // the flag here: dismissing the sheet part-way through tapping means
+        // the same thing as stopping, and two ways to stop is two places to
+        // keep in step.
+        cancelTapAlong()
         playback.pause()
         playback.clearSegment()
         if let resumeAt {
@@ -134,7 +162,7 @@ final class PracticeModel {
 
     /// The first phrase not yet passed, so reopening a text resumes rather
     /// than starting the reader at the top of something half done.
-    private var firstUnfinished: Int {
+    var firstUnfinished: Int {
         phrases.first { attempts[$0.index]?.isPassing() != true }?.index ?? 0
     }
 
@@ -180,7 +208,12 @@ final class PracticeModel {
         current = index
         typed = attempts[index]?.typed ?? ""
         result = nil
-        isRevealed = false
+        // Hidden again — unless the boundary editor is open, which shows
+        // the phrase's text because a boundary cannot be placed without
+        // knowing which words it is meant to contain. Leaving the flag
+        // clear there would let the editor display every phrase it moved
+        // to while the model still believed nobody had looked.
+        isRevealed = isEditing
         // Paused before the segment is cleared, not after. Clearing it
         // removes the stop time, so a transport left running would sail
         // past the phrase it was playing and on into the next one, while
@@ -270,99 +303,6 @@ final class PracticeModel {
             phrases = try await services.library.phrases(for: textID)
         } catch {
             Log.error("practice", "could not grade a phrase: \(error)")
-        }
-    }
-
-    // MARK: - Alignment
-
-    /// Works out where each phrase is said, which is what makes any of the
-    /// rest possible.
-    func align(installingModel: Bool = false) {
-        guard alignTask == nil else { return }
-        alignGeneration += 1
-        let generation = alignGeneration
-        alignTask = Task { [weak self] in
-            await self?.runAlignment(installingModel: installingModel, generation: generation)
-            guard let self, generation == alignGeneration else { return }
-            alignTask = nil
-        }
-    }
-
-    func cancelAlignment() {
-        alignTask?.cancel()
-        alignTask = nil
-        // Bumped so that whatever the stopped run does on its way out
-        // belongs to a generation nobody is listening to any more.
-        alignGeneration += 1
-        phase = phrases.isEmpty ? .needsAlignment : .ready
-    }
-
-    private func runAlignment(installingModel: Bool, generation: Int) async {
-        guard #available(macOS 26.0, iOS 26.0, *) else {
-            phase = .unavailable(.systemTooOld)
-            return
-        }
-        guard let track = try? await services.library.audioTrack(for: textID) else {
-            phase = .noAudio
-            return
-        }
-        let file = AudioAttachment.file(for: track, in: services.locations)
-        let aligner = SpeechAligner()
-        guard generation == alignGeneration else { return }
-        phase = .aligning(SpeechAlignmentProgress(fraction: nil))
-
-        do {
-            let heard = try await aligner.listen(
-                to: file,
-                installIfNeeded: installingModel,
-                progress: { [weak self] progress in
-                    Task { @MainActor in self?.report(progress, from: generation) }
-                },
-            )
-            try Task.checkCancellation()
-
-            let splitting = PhraseSplitting.forAudio(
-                characters: content.count,
-                duration: heard.duration,
-            )
-            let placed = ForcedAlignment.align(
-                phrases: PhraseSplitter.phrases(in: content, splitting: splitting),
-                in: content,
-                to: heard,
-            )
-            try await services.library.savePhrases(placed, for: textID)
-            // Checked again after the write, not only after the listening.
-            // Stop pressed while the database was busy would otherwise let
-            // the run finish and announce itself ready.
-            try Task.checkCancellation()
-            guard generation == alignGeneration else { return }
-            phrases = try await services.library.phrases(for: textID)
-            attempts = try await services.library.attempts(for: textID)
-            current = firstUnfinished
-            phase = .ready
-        } catch is CancellationError {
-            guard generation == alignGeneration else { return }
-            phase = phrases.isEmpty ? .needsAlignment : .ready
-        } catch let problem as SpeechAlignmentProblem {
-            guard generation == alignGeneration else { return }
-            phase = .unavailable(obstacle(for: problem))
-        } catch {
-            guard generation == alignGeneration else { return }
-            phase = .unavailable(.failed(error.localizedDescription))
-        }
-    }
-
-    private func report(_ progress: SpeechAlignmentProgress, from generation: Int) {
-        guard generation == alignGeneration, case .aligning = phase else { return }
-        phase = .aligning(progress)
-    }
-
-    private func obstacle(for problem: SpeechAlignmentProblem) -> AlignmentObstacle {
-        switch problem {
-        case .systemTooOld: .systemTooOld
-        case .languageUnsupported: .languageUnsupported
-        case .modelUnavailable: .modelMissing
-        case let .unreadable(reason): .failed(reason)
         }
     }
 }

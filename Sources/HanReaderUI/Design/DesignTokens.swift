@@ -55,6 +55,20 @@ nonisolated enum ReaderColor {
         outcome == .correct ? .clear : dictation(outcome).opacity(0.14)
     }
 
+    /// The waveform in the boundary editor, and the part of it belonging to
+    /// the phrase being edited.
+    ///
+    /// The phrase is drawn in the accent and its surroundings are not, so
+    /// the question the editor exists to answer — does that syllable belong
+    /// inside? — is one the reader can see rather than measure.
+    static let waveform = Color.secondary.opacity(0.45)
+    static let waveformInPhrase = Color.accentColor.opacity(0.85)
+
+    /// A faint accent fill marking a region rather than an object: the span
+    /// of recording a phrase covers, and the bar that takes over the screen
+    /// while boundaries are being tapped in.
+    static let highlightWash = Color.accentColor.opacity(0.1)
+
     /// The fill behind a highlighted token.
     ///
     /// Takes the resolved `TokenHighlight` rather than an opacity, so that the
@@ -126,6 +140,15 @@ nonisolated enum ReaderMetrics {
     static let minimumHitTarget = 44.0
     /// Corner radius on a token's highlight.
     static let tokenCornerRadius = 4.0
+
+    /// How tall the boundary editor's waveform strip is, and how wide its
+    /// draggable edges are.
+    ///
+    /// The grab area is deliberately far wider than the line it draws: a
+    /// boundary is a one-point line and nobody can hit one with a mouse, let
+    /// alone a finger.
+    static let waveformHeight = 96.0
+    static let waveformHandleWidth = 22.0
 }
 
 /// Animations, with reduce-motion handled once.
