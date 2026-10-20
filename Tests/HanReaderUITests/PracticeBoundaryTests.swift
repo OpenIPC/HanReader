@@ -81,7 +81,7 @@ struct PracticeBoundaryTests {
         #expect(model.isEditing)
         #expect(model.isRevealed)
 
-        await model.stopEditing()
+        model.stopEditing()
         #expect(!model.isEditing)
     }
 
@@ -194,7 +194,7 @@ struct PracticeBoundaryTests {
         model.beginTapAlong()
         engine.onTime?(4.5)
         await model.tapBoundary()
-        await model.cancelTapAlong()
+        model.cancelTapAlong()
 
         #expect(model.tapping == nil)
         let stored = try await model.services.library.phrases(for: model.textID)
@@ -219,17 +219,16 @@ struct PracticeBoundaryTests {
         #expect(model.upcoming?.index == model.phrases.count - 1)
     }
 
-    /// Each tap places the boundary in front of a phrase, so the ones still
-    /// ahead keep placeholder times that are now behind the playhead.
-    /// Stopping early would otherwise leave them collapsed to the minimum,
-    /// stacked up where the reader stopped.
-    @Test("Stopping early spreads what was never tapped over what is left")
-    func stoppingSpreadsTheRemainder() async throws {
+    /// Each tap lays the phrases ahead of it out over the recording that is
+    /// left, so stopping needs no tidying up and never leaves a run of
+    /// stubs piled up behind the playhead.
+    @Test("A tap leaves the phrases ahead of it sharing what is left")
+    func tappingLeavesTheRemainderSpread() async throws {
         let (model, engine) = try await editing()
         model.beginTapAlong()
         engine.onTime?(4.5)
         await model.tapBoundary()
-        await model.cancelTapAlong()
+        model.cancelTapAlong()
 
         let stored = try await model.services.library.phrases(for: model.textID)
         // Phrases 1 and 2 share the 10.5 seconds after the tap rather than
@@ -238,6 +237,48 @@ struct PracticeBoundaryTests {
         #expect(stored[2].duration > BoundaryEditing.minimumDuration * 2)
         #expect(stored[1].end == stored[2].start)
         #expect(stored.last?.end == 15)
+    }
+
+    /// Stopping with nothing tapped must change nothing. The old settling
+    /// pass spread from the top of the list, so opening tap-along and
+    /// pressing Stop replaced a good alignment with equal slices.
+    @Test("Stopping before any tap leaves the alignment alone")
+    func stoppingBeforeTappingChangesNothing() async throws {
+        let (model, _) = try await editing()
+        let before = try await model.services.library.phrases(for: model.textID)
+        model.beginTapAlong()
+        model.cancelTapAlong()
+
+        let after = try await model.services.library.phrases(for: model.textID)
+        #expect(after == before)
+    }
+
+    /// A boundary somebody placed is not a guess, however little the
+    /// recogniser thought of it — and the warning it carried must not come
+    /// back from the database.
+    @Test("A corrected phrase stops being flagged uncertain")
+    func movingClearsTheWarning() async throws {
+        let (services, id) = try await Support.services(content: Support.content)
+        try await services.library.savePhrases(
+            [
+                Phrase(index: 0, start: 0, end: 5, textRange: 0 ..< 4, confidence: 0.1),
+                Phrase(index: 1, start: 5, end: 10, textRange: 5 ..< 9, confidence: 0.1),
+            ],
+            for: id,
+        )
+        let engine = SilentEngine()
+        let model = PracticeModel(
+            textID: id,
+            services: services,
+            playback: PlaybackModel(engine: engine, session: SilentSession(), wait: { _ in }),
+        )
+        await model.load()
+        engine.onDuration?(15)
+        model.select(1)
+        await model.move(.start, to: 4)
+
+        let stored = try await services.library.phrases(for: id)
+        #expect(stored[1].confidence == 1)
     }
 
     @Test("A text with one phrase has no boundaries to tap")

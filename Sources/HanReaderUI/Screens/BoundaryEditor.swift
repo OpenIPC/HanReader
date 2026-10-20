@@ -200,7 +200,7 @@ struct BoundaryEditor: View {
             Button("Tap them all in") { model.beginTapAlong() }
                 .font(.caption)
                 .disabled(model.phrases.count < 2)
-            Button("Done") { Task { await model.stopEditing() } }
+            Button("Done") { model.stopEditing() }
                 .font(.caption)
         }
     }

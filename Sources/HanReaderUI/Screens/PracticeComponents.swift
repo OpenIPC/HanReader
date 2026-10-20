@@ -234,10 +234,8 @@ struct TapAlongBar: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Stop", role: .cancel) {
-                    Task { await model.cancelTapAlong() }
-                }
-                .font(.caption)
+                Button("Stop", role: .cancel) { model.cancelTapAlong() }
+                    .font(.caption)
             }
         }
         .padding(ReaderMetrics.readingColumnPadding / 2)

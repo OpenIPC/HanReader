@@ -158,85 +158,93 @@ struct BoundaryEditingTests {
     /// left between them.
     @Test("A tap closes the gap between two phrases")
     func tapClosesTheGap() {
-        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 4.5, in: spaced())
-        #expect(placed.map(\.index) == [0, 1])
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 4.5, in: spaced(), duration: 15)
         #expect(placed[0].end == 4.5)
         #expect(placed[1].start == 4.5)
     }
 
     @Test("A tap before the previous phrase has begun is held off")
     func tapCannotCollapseThePreviousPhrase() {
-        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 0, in: spaced())
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 0, in: spaced(), duration: 15)
         #expect(placed[0].duration == BoundaryEditing.minimumDuration)
         #expect(placed[1].start == BoundaryEditing.minimumDuration)
     }
 
-    @Test("A tap after the next phrase has ended is held back")
-    func tapCannotCollapseTheNextPhrase() {
-        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 99, in: spaced())
-        // Phrase 1 ends at 9, so the boundary stops short of it.
-        #expect(placed[1].start == 9 - BoundaryEditing.minimumDuration)
-        #expect(placed[1].duration == BoundaryEditing.minimumDuration)
+    /// The tap decides where the boundary is. It is held off only by the
+    /// phrases either side needing a length — never by where a placeholder
+    /// split happened to put the phrase being opened, because a spoken
+    /// sentence running past its placeholder is the ordinary case.
+    @Test("A tap past the end of the recording stops where there is still room")
+    func tapStopsWhereThereIsRoom() {
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 99, in: spaced(), duration: 15)
+        // Two phrases still to come, each needing its minimum.
+        #expect(placed[0].end == 15 - BoundaryEditing.minimumDuration * 2)
+    }
+
+    @Test("A tap past a phrase's placeholder end still lands where it was pressed")
+    func tapBeatsThePlaceholder() {
+        // Phrase 1's placeholder runs 5 to 9, and the sentence it holds is
+        // still being spoken at 11.
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 11, in: spaced(), duration: 30)
+        #expect(placed[0].end == 11)
+        #expect(placed[1].start == 11)
+    }
+
+    /// A phrase somebody placed is their decision, and a tap in front of it
+    /// says nothing about it — which is what keeps stopping part-way from
+    /// costing the reader the second half of a good alignment.
+    @Test("A tap leaves phrases placed by hand alone")
+    func tapLeavesManualPhrasesAlone() {
+        let phrases = [
+            Phrase(index: 0, start: 0, end: 5, textRange: 0 ..< 5),
+            Phrase(index: 1, start: 5, end: 10, textRange: 5 ..< 10),
+            Phrase(index: 2, start: 10, end: 15, textRange: 10 ..< 15, origin: .manual),
+        ]
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 3, in: phrases, duration: 15)
+        #expect(placed.map(\.index) == [0, 1])
+        #expect(placed[1].origin == .manual)
+    }
+
+    @Test("The phrases a tap reflows are still guesses")
+    func reflowedPhrasesKeepTheirOrigin() {
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 3, in: spaced(), duration: 15)
+        #expect(placed.map(\.index) == [0, 1, 2])
+        // The one it opens was placed; the one behind it was only moved out
+        // of the way.
+        #expect(placed[1].origin == .manual)
+        #expect(placed[2].origin == .recognised)
+        // And they share what is left rather than stacking up as stubs.
+        #expect(placed[1].duration == 6)
+        #expect(placed[2].duration == 6)
     }
 
     /// The first phrase opens where the recording does, so there is no
     /// boundary in front of it to tap.
     @Test("There is no boundary before the first phrase")
     func noBoundaryBeforeTheFirst() {
-        #expect(BoundaryEditing.place(boundaryBefore: 0, at: 1, in: spaced()).isEmpty)
+        #expect(BoundaryEditing.place(boundaryBefore: 0, at: 1, in: spaced(), duration: 15).isEmpty)
     }
 
     @Test("A tap on a phrase that is not there places nothing")
     func tapOnAnUnknownPhrase() {
-        #expect(BoundaryEditing.place(boundaryBefore: 99, at: 1, in: spaced()).isEmpty)
+        #expect(BoundaryEditing.place(boundaryBefore: 99, at: 1, in: spaced(), duration: 15)
+            .isEmpty)
     }
 
     @Test("A tap exactly where the boundary already is changes nothing")
     func tapOnTheSamePlace() {
-        #expect(BoundaryEditing.place(boundaryBefore: 1, at: 5, in: abutting()).isEmpty)
+        #expect(BoundaryEditing.place(boundaryBefore: 1, at: 5, in: abutting(), duration: 15)
+            .isEmpty)
     }
 
     @Test("A tapped boundary is marked by hand on both sides")
     func tapRecordsItsOrigin() {
-        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 4.5, in: spaced())
-        #expect(placed.allSatisfy { $0.origin == .manual })
-    }
-
-    // MARK: - Spreading what was never reached
-
-    @Test("Untapped phrases share the recording that is left")
-    func respreadSharesWhatRemains() {
-        let spread = BoundaryEditing.respread(from: 1, after: 6, in: spaced(), duration: 16)
-        #expect(spread.map(\.index) == [1, 2])
-        #expect(spread[0].start == 6)
-        #expect(spread[0].end == 11)
-        #expect(spread[1].start == 11)
-        #expect(spread[1].end == 16)
-    }
-
-    /// Nobody placed these, so a later re-alignment must be free to replace
-    /// them — which is exactly what `manual` would prevent.
-    @Test("Spreading does not claim anybody placed them")
-    func respreadKeepsItsOrigin() {
-        let phrases = [
-            Phrase(index: 0, start: 0, end: 4, textRange: 0 ..< 5, origin: .manual),
-            Phrase(index: 1, start: 5, end: 9, textRange: 5 ..< 10, origin: .recognised),
-        ]
-        let spread = BoundaryEditing.respread(from: 0, after: 0, in: phrases, duration: 16)
-        #expect(spread[0].origin == .manual)
-        #expect(spread[1].origin == .recognised)
-    }
-
-    @Test("Spreading past the end of the recording still leaves room to play")
-    func respreadWithNoRoomLeft() {
-        let spread = BoundaryEditing.respread(from: 0, after: 15, in: spaced(), duration: 15)
-        #expect(spread.count == 3)
-        #expect(spread.allSatisfy { $0.duration >= BoundaryEditing.minimumDuration })
-    }
-
-    @Test("Spreading from a phrase that is not there spreads nothing")
-    func respreadFromAnUnknownPhrase() {
-        #expect(BoundaryEditing.respread(from: 99, after: 0, in: spaced(), duration: 15).isEmpty)
+        let placed = BoundaryEditing.place(boundaryBefore: 1, at: 4.5, in: spaced(), duration: 15)
+        // The two phrases the boundary belongs to. Anything further along
+        // was only moved out of the way; `reflowedPhrasesKeepTheirOrigin`
+        // is what pins that.
+        #expect(placed[0].origin == .manual)
+        #expect(placed[1].origin == .manual)
     }
 
     // MARK: - What a move records

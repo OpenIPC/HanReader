@@ -104,6 +104,7 @@ public enum BoundaryEditing {
         boundaryBefore index: Int,
         at time: Double,
         in phrases: [Phrase],
+        duration: Double,
     )
         -> [Phrase]
     {
@@ -111,61 +112,57 @@ public enum BoundaryEditing {
             return []
         }
         let previous = phrases[position - 1]
-        let phrase = phrases[position]
+        let tail = Array(phrases[position...])
+
+        // The tap decides where the boundary is. It is held off only by the
+        // phrase behind it needing a length, and by the phrases ahead of it
+        // needing one each — never by where a placeholder split happened to
+        // put the phrase being opened. A spoken sentence that runs past its
+        // placeholder is the ordinary case, not the exception, and pinning
+        // the tap to the placeholder would record the boundary somewhere
+        // the reader did not press.
         let floor = previous.start + minimumDuration
-        let ceiling = phrase.end - minimumDuration
+        let ceiling = duration - minimumDuration * Double(tail.count)
         guard floor <= ceiling else { return [] }
         let boundary = time.clamped(to: floor ... ceiling)
-        guard boundary != previous.end || boundary != phrase.start else { return [] }
-        return [
-            previous.moved(start: previous.start, end: boundary),
-            phrase.moved(start: boundary, end: phrase.end),
-        ]
+        guard boundary != previous.end || boundary != tail[0].start else { return [] }
+
+        var moved = [previous.moved(start: previous.start, end: boundary)]
+        moved += reflow(tail, from: boundary, to: duration)
+        return moved
     }
 
-    /// Spreads phrases nobody reached over the recording that is left.
+    /// Lays the phrases ahead of a tap out over the recording that is left.
     ///
-    /// Tapping along places the boundary in *front* of each phrase, so the
-    /// ones still ahead keep the times a placeholder split gave them — times
-    /// that are now behind the playhead. Left alone, a reader who tapped
-    /// three sentences of thirty and stopped would find the other
-    /// twenty-seven collapsed to the minimum length, stacked up behind where
-    /// they stopped. Spreading them over the time that remains puts them
-    /// back where they started: not right, but evenly wrong, and the same
-    /// kind of wrong a placeholder split is.
+    /// Only the ones nobody has placed. A `manual` phrase further down the
+    /// text is somebody's decision and the tap in front of it says nothing
+    /// about it, so the reflow stops there — which is also what keeps
+    /// stopping part-way from costing the reader the second half of a good
+    /// alignment.
     ///
-    /// Their origin is deliberately **not** changed. Nobody placed these, so
-    /// a later re-alignment should be free to replace them — which is
-    /// exactly what `manual` would prevent.
-    ///
-    /// - Parameter index: the first phrase that was never reached.
-    public static func respread(
-        from index: Int,
-        after time: Double,
-        in phrases: [Phrase],
-        duration: Double,
+    /// The first phrase is the one the tap opens, so its start is the
+    /// boundary and it is `manual`. The rest keep their origin: they are
+    /// still guesses, and a later re-alignment should be free to replace
+    /// them.
+    private static func reflow(
+        _ tail: [Phrase],
+        from boundary: Double,
+        to duration: Double,
     )
         -> [Phrase]
     {
-        guard let position = phrases.firstIndex(where: { $0.index == index }) else { return [] }
-        let remaining = phrases[position...]
-        guard !remaining.isEmpty else { return [] }
-        // Equal slices, with a floor so that a reader who stopped at the
-        // very end of a recording is not left with phrases of no length. The
-        // last phrase therefore ends exactly at `duration` when there was
-        // room, and past it when there was not — which is the same answer
-        // `tidy` gives, and the transport simply plays to the end.
-        let slice = max(minimumDuration, (duration - time) / Double(remaining.count))
-        return remaining.enumerated().map { offset, phrase in
-            Phrase(
-                index: phrase.index,
-                start: time + Double(offset) * slice,
-                end: time + Double(offset + 1) * slice,
-                textRange: phrase.textRange,
-                confidence: phrase.confidence,
-                origin: phrase.origin,
-                grade: phrase.grade,
-            )
+        let reflowed = tail.prefix { $0.origin != .manual }
+        // At least the one being opened, even where the next phrase was
+        // placed by hand and is therefore left alone.
+        let count = max(1, reflowed.count)
+        let slice = max(minimumDuration, (duration - boundary) / Double(count))
+        return (0 ..< count).map { offset in
+            let phrase = tail[offset]
+            let start = boundary + Double(offset) * slice
+            let end = start + slice
+            return offset == 0
+                ? phrase.moved(start: start, end: end)
+                : phrase.at(start: start, end: end)
         }
     }
 
@@ -214,6 +211,21 @@ extension Phrase {
     /// Marked `manual`, because every caller here is a reader correcting
     /// what the recogniser did, and that is precisely what a later
     /// re-alignment must not overwrite.
+    /// The same phrase at new times, with its origin and confidence left
+    /// alone — for times that were shuffled on a reader's behalf rather
+    /// than chosen by them.
+    func at(start: Double, end: Double) -> Phrase {
+        Phrase(
+            index: index,
+            start: start,
+            end: end,
+            textRange: textRange,
+            confidence: confidence,
+            origin: origin,
+            grade: grade,
+        )
+    }
+
     func moved(start: Double, end: Double) -> Phrase {
         Phrase(
             index: index,

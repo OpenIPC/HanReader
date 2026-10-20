@@ -131,18 +131,24 @@ extension LibraryRepository {
     ///   were shuffled around on a reader's behalf rather than chosen by
     ///   them — the phrases nobody reached while tapping along — or a later
     ///   re-alignment will preserve a guess as though it were a decision.
+    /// - Parameter confidence: written as well as the times, because a
+    ///   boundary somebody placed is not a guess however little the
+    ///   recogniser thought of it. Leaving it behind meant a corrected
+    ///   phrase came back from the database still flagged uncertain, and
+    ///   the warning the reader had just answered reappeared.
     public func movePhrase(
         _ index: Int,
         in id: TextID,
         start: Double,
         end: Double,
+        confidence: Double = 1,
         origin: PhraseOrigin = .manual,
     ) async throws {
         try await dbQueue.write { db in
             try db.execute(sql: """
-                UPDATE phrase SET startTime = ?, endTime = ?, origin = ?
+                UPDATE phrase SET startTime = ?, endTime = ?, confidence = ?, origin = ?
                 WHERE textId = ? AND idx = ?
-            """, arguments: [start, end, origin.rawValue, id.rawValue, index])
+            """, arguments: [start, end, confidence, origin.rawValue, id.rawValue, index])
         }
     }
 

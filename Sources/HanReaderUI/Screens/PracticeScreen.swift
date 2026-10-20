@@ -140,11 +140,7 @@ struct PracticeScreen: View {
         }
         ToolbarItem {
             Button {
-                if model.isEditing {
-                    Task { await model.stopEditing() }
-                } else {
-                    model.startEditing()
-                }
+                model.isEditing ? model.stopEditing() : model.startEditing()
             } label: {
                 Label("Edit boundaries", systemImage: "waveform.path")
             }

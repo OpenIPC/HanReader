@@ -148,7 +148,11 @@ final class PracticeModel {
         alignTask = nil
         waveformTask?.cancel()
         waveformTask = nil
-        tapping = nil
+        // Through the same path the Stop button takes, rather than clearing
+        // the flag here: dismissing the sheet part-way through tapping means
+        // the same thing as stopping, and two ways to stop is two places to
+        // keep in step.
+        cancelTapAlong()
         playback.pause()
         playback.clearSegment()
         if let resumeAt {
@@ -204,7 +208,12 @@ final class PracticeModel {
         current = index
         typed = attempts[index]?.typed ?? ""
         result = nil
-        isRevealed = false
+        // Hidden again — unless the boundary editor is open, which shows
+        // the phrase's text because a boundary cannot be placed without
+        // knowing which words it is meant to contain. Leaving the flag
+        // clear there would let the editor display every phrase it moved
+        // to while the model still believed nobody had looked.
+        isRevealed = isEditing
         // Paused before the segment is cleared, not after. Clearing it
         // removes the stop time, so a transport left running would sail
         // past the phrase it was playing and on into the next one, while

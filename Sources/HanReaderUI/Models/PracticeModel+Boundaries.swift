@@ -58,9 +58,9 @@ extension PracticeModel {
         }
     }
 
-    func stopEditing() async {
+    func stopEditing() {
         isEditing = false
-        await cancelTapAlong()
+        cancelTapAlong()
     }
 
     /// The span of recording the editor draws, around the phrase being
@@ -89,7 +89,7 @@ extension PracticeModel {
             of: phrase.index,
             to: time,
             in: phrases,
-            duration: max(playback.duration, phrases.last?.end ?? 0),
+            duration: recordingLength,
         )
         await save(moved)
     }
@@ -163,37 +163,29 @@ extension PracticeModel {
         // in one place, and that place is already the one the screen shows
         // the reader.
         guard var tapping, let next = upcoming else { return }
+        let time = playback.playhead
+        // Advanced before the write, not after it. Each Mark starts its own
+        // task, and two presses either side of a database round trip would
+        // otherwise both read the same upcoming phrase and place the same
+        // boundary twice — losing one of them.
+        tapping.next += 1
+        self.tapping = tapping.isFinished(of: phrases.count) ? nil : tapping
+        select(phrases[min(tapping.next, phrases.count) - 1].index)
         await save(BoundaryEditing.place(
             boundaryBefore: next.index,
-            at: playback.playhead,
+            at: time,
             in: phrases,
+            duration: recordingLength,
         ))
-        tapping.next += 1
-        if tapping.isFinished(of: phrases.count) {
-            self.tapping = nil
-        } else {
-            self.tapping = tapping
-        }
-        select(phrases[min(tapping.next, phrases.count) - 1].index)
     }
 
-    /// Spreads whatever was never tapped over the recording that is left.
+    /// How long the recording is, as far as anything here knows.
     ///
-    /// Each tap places the boundary in *front* of a phrase, so the ones
-    /// still ahead keep placeholder times that are now behind the playhead.
-    /// Stopping three sentences into thirty would otherwise leave
-    /// twenty-seven stubs piled up where the reader stopped. Spread from the
-    /// last tap, which is where the phrase they are hearing begins and the
-    /// last thing about this recording anybody actually decided.
-    func settleUntapped() async {
-        guard let tapping, tapping.next <= phrases.count, tapping.next > 0 else { return }
-        let opened = phrases[tapping.next - 1]
-        await save(BoundaryEditing.respread(
-            from: opened.index,
-            after: opened.start,
-            in: phrases,
-            duration: max(playback.duration, phrases.last?.end ?? 0),
-        ))
+    /// The transport's own figure, or the end of the last phrase when it
+    /// has not learnt one yet — which is the case in a test, and briefly at
+    /// launch.
+    var recordingLength: Double {
+        max(playback.duration, phrases.last?.end ?? 0)
     }
 
     /// Applies moved phrases and writes them down.
@@ -209,6 +201,7 @@ extension PracticeModel {
                     in: textID,
                     start: phrase.start,
                     end: phrase.end,
+                    confidence: phrase.confidence,
                     // Carried through rather than assumed: everything a
                     // reader places is `manual`, and the phrases shuffled
                     // along behind them are not.
@@ -217,13 +210,22 @@ extension PracticeModel {
             }
         } catch {
             Log.error("practice", "could not place a boundary: \(error)")
+            // The screen was updated before the write, so a failure has to
+            // take it back. Leaving the moved boundary on display would tell
+            // the reader their correction was kept, and it would be gone the
+            // next time they opened the text.
+            phrases = await (try? services.library.phrases(for: textID)) ?? phrases
         }
     }
 
-    func cancelTapAlong() async {
+    /// Stopping needs no tidying up. Every tap leaves the text consistent,
+    /// so there is never a run of stubs piled up behind the playhead to
+    /// repair — and the repair that used to happen here was what let a
+    /// reader who opened tapping and stopped at once have a good alignment
+    /// replaced with equal slices.
+    func cancelTapAlong() {
         guard tapping != nil else { return }
         playback.pause()
-        await settleUntapped()
         tapping = nil
     }
 

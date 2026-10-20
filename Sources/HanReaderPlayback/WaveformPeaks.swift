@@ -166,16 +166,22 @@ public enum WaveformReader {
         // assumed: an mp3 at 24 kHz and an m4a at 44.1 kHz would otherwise
         // fill the array at different speeds and one of them would end
         // half empty.
-        var samplesPerBucket = 0
+        var expectedSamples = 0.0
 
         while let buffer = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
-            if samplesPerBucket == 0 {
+            if expectedSamples == 0 {
                 guard let rate = sampleRate(of: buffer), rate > 0 else { continue }
-                samplesPerBucket = max(1, Int(rate * duration) / buckets)
+                expectedSamples = rate * duration
             }
             for sample in samples(of: buffer) {
-                let bucket = samplesSeen / samplesPerBucket
+                // The bucket is a *fraction* of the file rather than a
+                // fixed number of samples. Integer division would make each
+                // bucket cover slightly less audio than `resampled` assumes
+                // — `duration / values.count` — and the error accumulates,
+                // so the far end of a long recording would be drawn out of
+                // step with what plays there.
+                let bucket = Int(Double(samplesSeen) / expectedSamples * Double(buckets))
                 samplesSeen += 1
                 guard bucket < buckets else { break }
                 values[bucket] = max(values[bucket], abs(sample))
