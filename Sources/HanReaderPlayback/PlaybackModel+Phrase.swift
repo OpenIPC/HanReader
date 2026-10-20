@@ -57,13 +57,23 @@ extension PlaybackModel {
         }
         onStateChange?()
         drillTask = Task { [weak self] in
-            let gap = self?.drill.gap ?? 0
+            guard let gap = self?.drill.gap, let wait = self?.wait else { return }
             if gap > 0 {
-                try? await Task.sleep(for: .seconds(gap))
+                await wait(gap)
             }
             guard !Task.isCancelled else { return }
             self?.playSegmentOnce()
         }
+    }
+
+    /// Awaits a repeat that is currently waiting out its gap.
+    ///
+    /// A test seam, and the reason there is no sleeping left in these
+    /// tests: a repeat is scheduled on a task that suspends twice before it
+    /// plays, so "yield a couple of times and hope" is as much a guess as
+    /// sleeping was. Awaiting the task itself is exact.
+    func awaitPendingRepeat() async {
+        await drillTask?.value
     }
 
     func cancelDrill() {

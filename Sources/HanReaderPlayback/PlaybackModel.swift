@@ -148,12 +148,28 @@ public final class PlaybackModel {
     @ObservationIgnored private let session: any PlaybackSession
     @ObservationIgnored private var hasActivatedSession = false
 
+    /// Waits out the gap between repeats.
+    ///
+    /// Injectable because the alternative is a test that sleeps and hopes.
+    /// A fixed sleep just over the gap passes on a fast machine and fails
+    /// under parallel execution or on a slower runner — which is exactly
+    /// what happened, locally green and red in CI. With the wait supplied,
+    /// a test can let it return at once and assert the *order* of what
+    /// happens rather than the clock it happens on.
+    public typealias Wait = @Sendable (Double) async -> Void
+
+    @ObservationIgnored let wait: Wait
+
     public init(
         engine: (any AudioEngine)? = nil,
         session: (any PlaybackSession)? = nil,
+        wait: @escaping Wait = { seconds in
+            try? await Task.sleep(for: .seconds(seconds))
+        },
     ) {
         self.engine = engine ?? AVPlayerAudioEngine()
         self.session = session ?? SystemPlaybackSession()
+        self.wait = wait
         configure()
     }
 

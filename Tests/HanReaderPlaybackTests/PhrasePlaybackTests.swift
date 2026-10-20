@@ -13,35 +13,45 @@ import Testing
 @MainActor
 @Suite("Phrase playback")
 struct PhrasePlaybackTests {
-    /// Waits for something to become true, rather than sleeping for a
-    /// guessed interval and hoping.
+    /// Records what the drill asked to wait for, and returns at once.
     ///
-    /// A fixed sleep just over the gap passes here and fails on a slower
-    /// machine, which is a flaky test dressed as a timing assertion. The
-    /// claim being made is "this happens", not "this happens within 500
-    /// milliseconds", so the deadline is generous and the polling is tight.
-    private func eventually(
-        _ condition: () -> Bool,
-        within seconds: Double = 5,
-    ) async
-        -> Bool
-    {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if condition() {
-                return true
-            }
-            try? await Task.sleep(for: .milliseconds(10))
+    /// The gap is the one thing in this transport that is about real time,
+    /// and a test that actually waits it out is a test that passes here and
+    /// fails on a loaded CI runner — which is what happened twice, first
+    /// with a fixed sleep and then with polling to a five-second deadline.
+    /// With the wait injected there is nothing to race: the test asserts
+    /// that the gap was requested and that the repeat followed it.
+    final nonisolated class Waits: @unchecked Sendable {
+        private let lock = NSLock()
+        private var requested: [Double] = []
+
+        func record(_ seconds: Double) {
+            lock.withLock { requested.append(seconds) }
         }
-        return condition()
+
+        var all: [Double] {
+            lock.withLock { requested }
+        }
     }
 
-    private func fixture(duration: Double = 100) -> (SpyEngine, PlaybackModel) {
+    /// A loaded transport with its engine and its record of waits.
+    private struct Bench {
+        let engine: SpyEngine
+        let model: PlaybackModel
+        let waits: Waits
+    }
+
+    private func bench(duration: Double = 100) -> Bench {
         let engine = SpyEngine()
-        let model = PlaybackModel(engine: engine, session: SpySession())
+        let waits = Waits()
+        let model = PlaybackModel(
+            engine: engine,
+            session: SpySession(),
+            wait: { seconds in waits.record(seconds) },
+        )
         model.load(URL(fileURLWithPath: "/tmp/track.m4a"))
         engine.declareDuration(duration)
-        return (engine, model)
+        return Bench(engine: engine, model: model, waits: waits)
     }
 
     // MARK: - Stopping where the phrase stops
@@ -52,7 +62,8 @@ struct PhrasePlaybackTests {
     /// would overshoot by up to 250 ms.
     @Test("Playing a phrase sets an exact stop time")
     func phraseStopsAtItsOwnEnd() {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17)
 
         #expect(engine.stopTimes.last == 17)
@@ -66,7 +77,8 @@ struct PhrasePlaybackTests {
 
     @Test("Leaving phrase playback restores the whole recording")
     func clearingTheSegmentRemovesTheStopTime() {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17)
         model.clearSegment()
 
@@ -76,7 +88,8 @@ struct PhrasePlaybackTests {
 
     @Test("Unloading forgets the phrase as well as the track")
     func unloadingClearsTheSegment() {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17)
         model.unload()
 
@@ -91,7 +104,8 @@ struct PhrasePlaybackTests {
     /// happen when it ends.
     @Test("A phrase played once stops and says so")
     func playedOnce() {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         var finished = 0
         model.onSegmentFinished = { finished += 1 }
 
@@ -108,7 +122,8 @@ struct PhrasePlaybackTests {
     /// the end — not three reports.
     @Test("A phrase drilled three times plays three times and reports once")
     func repeatedThreeTimes() async {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         var finished = 0
         model.onSegmentFinished = { finished += 1 }
 
@@ -116,12 +131,12 @@ struct PhrasePlaybackTests {
         #expect(engine.playCount == 1)
 
         engine.reachEnd()
-        await Task.yield()
+        await model.awaitPendingRepeat()
         #expect(engine.playCount == 2)
         #expect(finished == 0)
 
         engine.reachEnd()
-        await Task.yield()
+        await model.awaitPendingRepeat()
         #expect(engine.playCount == 3)
         #expect(finished == 0)
 
@@ -135,42 +150,63 @@ struct PhrasePlaybackTests {
     /// previous pass left the playhead.
     @Test("Every repeat seeks back to the start of the phrase")
     func repeatsSeekBack() async {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17, drill: .init(repeats: 2, gap: 0))
         engine.reachEnd()
-        await Task.yield()
+        await model.awaitPendingRepeat()
 
         #expect(engine.seeks.suffix(2) == [12, 12])
     }
 
     /// The gap is the point of a drill rather than a detail of it: it is
     /// where the learner says the phrase back, or writes it down.
-    @Test("A gap between repeats delays the next play")
+    @Test("A gap between repeats is waited out before the next play")
     func gapDelaysTheNextPass() async {
-        let (engine, model) = fixture()
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        let waits = rig.waits
         model.play(segment: 12 ..< 17, drill: .init(repeats: 2, gap: 0.3))
         engine.reachEnd()
 
-        // Immediately after the phrase ends, nothing is playing.
+        // The phrase has ended and nothing is playing yet.
         #expect(!model.isPlaying)
         #expect(engine.playCount == 1)
 
-        #expect(await eventually { engine.playCount == 2 })
+        await model.awaitPendingRepeat()
+
+        // The gap was asked for, and the repeat came after it.
+        #expect(waits.all == [0.3])
+        #expect(engine.playCount == 2)
         #expect(model.isPlaying)
+    }
+
+    @Test("No gap is waited for when none was asked for")
+    func noGapIsNotWaitedFor() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        let waits = rig.waits
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 2, gap: 0))
+        engine.reachEnd()
+        await model.awaitPendingRepeat()
+
+        #expect(waits.all.isEmpty)
+        #expect(engine.playCount == 2)
     }
 
     /// A reader pressing pause during the silence must not find the phrase
     /// starting again a second later. The transport has to stay stopped.
     @Test("Pausing during the gap stops the drill")
-    func pausingDuringTheGapStopsIt() async throws {
-        let (engine, model) = fixture()
+    func pausingDuringTheGapStopsIt() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.2))
         engine.reachEnd()
         model.pause()
 
-        // A negative claim, so this one does have to wait — comfortably past
-        // the gap, to be sure the repeat did not merely arrive late.
-        try await Task.sleep(for: .milliseconds(800))
+        // Nothing to wait for: `pause` cancelled the task, and awaiting a
+        // cancelled one returns at once rather than after its gap.
+        await model.awaitPendingRepeat()
         #expect(engine.playCount == 1)
         #expect(!model.isPlaying)
     }
@@ -178,13 +214,14 @@ struct PhrasePlaybackTests {
     /// And choosing another phrase mid-drill abandons the old one rather
     /// than letting its remaining repeats play over the new one.
     @Test("Starting another phrase abandons the drill in progress")
-    func anotherPhraseCancelsTheDrill() async throws {
-        let (engine, model) = fixture()
+    func anotherPhraseCancelsTheDrill() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.2))
         engine.reachEnd()
 
         model.play(segment: 30 ..< 35)
-        try await Task.sleep(for: .milliseconds(800))
+        await model.awaitPendingRepeat()
 
         #expect(model.segment == 30 ..< 35)
         #expect(engine.seeks.last == 30)
@@ -205,7 +242,8 @@ struct PhrasePlaybackTests {
     /// phrase of a recording would look like the end of it.
     @Test("A phrase ending is not the recording ending")
     func phraseEndIsNotTrackEnd() {
-        let (engine, model) = fixture(duration: 100)
+        let rig = bench(duration: 100)
+        let (engine, model) = (rig.engine, rig.model)
         model.play(segment: 12 ..< 17)
         engine.reachEnd()
 
@@ -216,7 +254,7 @@ struct PhrasePlaybackTests {
 
     @Test("Speaking a word still ducks a phrase, and resumes it")
     func speechStillDucks() {
-        let (_, model) = fixture()
+        let model = bench().model
         model.play(segment: 12 ..< 17)
         model.pauseForSpeech()
         #expect(!model.isPlaying)
