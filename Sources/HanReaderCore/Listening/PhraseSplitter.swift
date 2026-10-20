@@ -278,15 +278,40 @@ public enum PhraseSplitter {
     /// at the same places this would have cut, chosen by the clock instead
     /// of by a guess at it.
     public static func cutPoints(in range: Range<Int>, of text: String) -> [Int] {
-        let metrics = Metrics(text)
+        cutPoints(in: range, metrics: Metrics(text))
+    }
+
+    /// The same, for a caller that already has the metrics.
+    ///
+    /// Building them is proportional to the whole document, so a caller
+    /// re-cutting many phrases of a chapter must not rebuild them per
+    /// phrase — that is the document scanned once per over-long phrase, for
+    /// an answer that only concerns one range of it.
+    static func cutPoints(in range: Range<Int>, metrics: Metrics) -> [Int] {
         var points: [Int] = []
         var offset = range.lowerBound
+        var pending: Int?
         for character in metrics.text(in: range) {
             offset += character.utf16.count
-            guard offset > range.lowerBound, offset < range.upperBound else { continue }
-            if separators.contains(character) || terminators.contains(character) {
-                points.append(offset)
+            // A closing quote after a full stop belongs to the clause it
+            // closes, so the cut moves past it. Otherwise re-cutting a long
+            // sentence hands back a practice phrase that is one 」.
+            if pending != nil, trailing.contains(character) {
+                pending = offset
+                continue
             }
+            if let point = pending {
+                if point > range.lowerBound, point < range.upperBound {
+                    points.append(point)
+                }
+                pending = nil
+            }
+            if separators.contains(character) || terminators.contains(character) {
+                pending = offset
+            }
+        }
+        if let point = pending, point > range.lowerBound, point < range.upperBound {
+            points.append(point)
         }
         return points
     }

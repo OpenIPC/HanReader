@@ -190,6 +190,42 @@ struct PhraseSplitterTests {
         #expect(result.joined() == source)
     }
 
+    // MARK: - Cut points
+
+    /// Review finding: offering a cut immediately after a terminator
+    /// stranded the closing quote that follows it, and when the clause
+    /// before was already over the duration cap nothing could merge it back
+    /// — so re-cutting a long sentence handed back a practice phrase that
+    /// was one 」.
+    @Test("A cut after a terminator carries its closing quote along")
+    func cutPointsCarryClosingMarks() {
+        let source = "他说：“这是什么意思？”我不知道，真的不知道。"
+        let points = PhraseSplitter.cutPoints(in: 0 ..< source.utf16.count, of: source)
+        let utf16 = Array(source.utf16)
+        for point in points {
+            // Nothing after a cut may begin with a closing mark.
+            guard point < utf16.count, let scalar = Unicode.Scalar(utf16[point]) else { continue }
+            #expect(!PhraseSplitter.trailing.contains(Character(scalar)))
+        }
+        #expect(!points.isEmpty)
+    }
+
+    @Test("Cut points sit strictly inside the range they are asked for")
+    func cutPointsStayInside() {
+        let source = "第一句，第二句。第三句。"
+        let range = 0 ..< source.utf16.count
+        for point in PhraseSplitter.cutPoints(in: range, of: source) {
+            #expect(point > range.lowerBound)
+            #expect(point < range.upperBound)
+        }
+    }
+
+    @Test("A range with no punctuation offers nowhere to cut")
+    func noCutPoints() {
+        let source = "山村的孩子需要他"
+        #expect(PhraseSplitter.cutPoints(in: 0 ..< source.utf16.count, of: source).isEmpty)
+    }
+
     // MARK: - Ranges
 
     /// Phrases are consumed as UTF-16 ranges into the stored text, the same

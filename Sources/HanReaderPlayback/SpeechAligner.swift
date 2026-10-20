@@ -188,6 +188,12 @@ public nonisolated struct SpeechAligner: Sendable {
                 progress(SpeechAlignmentProgress(fraction: min(1, last.end / duration)))
             }
         }
+        // Said plainly at the end, rather than left at whatever the last
+        // segment implied. A recording that trails off into silence would
+        // otherwise stop at eight-tenths and look stuck, and one the
+        // recogniser heard nothing in would never report at all — which is
+        // the case a reader most needs to see finish.
+        progress(SpeechAlignmentProgress(fraction: 1))
         return RecognisedSpeech(segments: segments, duration: duration)
     }
 

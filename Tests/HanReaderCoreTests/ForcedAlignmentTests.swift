@@ -165,8 +165,173 @@ struct ForcedAlignmentTests {
         #expect(hopeless.allSatisfy { $0.confidence < 0.4 })
     }
 
-    // MARK: - Cutting again, by the clock
+    /// Review finding: anchoring a phrase on its first and last *matched*
+    /// characters cuts off any it misheard at the edges — the character is
+    /// still spoken in the recording, so the reader hears the phrase
+    /// clipped. This is what a 97% round trip looked like on real audio.
+    @Test("A misheard first character is still inside the phrase's audio")
+    func misheardEdgesAreCovered() {
+        let text = "山村的孩子。教学任务很重。"
+        // 教 misheard as 交, so the second phrase's first character is not
+        // an anchor. Its audio must still begin where 。 left off.
+        var segments: [RecognisedSpeech.Segment] = []
+        for (index, character) in Array("山村的孩子交学任务很重").enumerated() {
+            let start = Double(index) * 0.5
+            segments.append(.init(text: String(character), start: start, end: start + 0.5))
+        }
+        let speech = RecognisedSpeech(segments: segments, duration: 6)
+        let placed = ForcedAlignment.align(
+            phrases: PhraseSplitter.phrases(in: text),
+            in: text,
+            to: speech,
+            maximumDuration: nil,
+        )
 
+        #expect(placed.count == 2)
+        // 交 is spoken over 2.5–3.0, and the phrase must include it rather
+        // than starting at 3.0 where 学 was matched.
+        #expect(placed[1].start <= 2.51)
+        #expect(placed[1].confidence < 1)
+    }
+
+    /// And at the other edge.
+    @Test("A misheard last character is still inside the phrase's audio")
+    func misheardTrailingEdgeIsCovered() {
+        let text = "山村的孩子。教学任务很重。"
+        var segments: [RecognisedSpeech.Segment] = []
+        for (index, character) in Array("山村的孩紫教学任务很重").enumerated() {
+            let start = Double(index) * 0.5
+            segments.append(.init(text: String(character), start: start, end: start + 0.5))
+        }
+        let speech = RecognisedSpeech(segments: segments, duration: 6)
+        let placed = ForcedAlignment.align(
+            phrases: PhraseSplitter.phrases(in: text),
+            in: text,
+            to: speech,
+            maximumDuration: nil,
+        )
+        #expect(placed.count == 2)
+        // 紫 stands where 子 was said, over 2.0–2.5, so the first phrase has
+        // to reach 2.5 rather than stopping at 2.0.
+        #expect(placed[0].end >= 2.49)
+    }
+
+    // MARK: - Degenerate input
+
+    /// No recognition at all — the model missing, or a recording of silence.
+    /// Equal slices let the reader step through and place the boundaries by
+    /// hand, and confidence zero is what tells the UI to offer that.
+    @Test("With nothing recognised the phrases are spread evenly")
+    func nothingRecognised() {
+        let placed = aligned(RecognisedSpeech(segments: [], duration: 9))
+        #expect(placed.count == 3)
+        #expect(placed.allSatisfy { $0.confidence == 0 })
+        #expect(abs(placed[0].end - 3) < 0.000_1)
+        #expect(abs(placed[2].end - 9) < 0.000_1)
+        for (earlier, later) in zip(placed, placed.dropFirst()) {
+            #expect(earlier.end <= later.start + 0.000_1)
+        }
+    }
+
+    @Test("A recogniser that heard only punctuation counts as nothing")
+    func punctuationOnlyRecognition() {
+        let placed = aligned(RecognisedSpeech(
+            segments: [segment("，。！", 0, 7)],
+            duration: 7,
+        ))
+        #expect(placed.count == 3)
+        #expect(placed.allSatisfy { $0.confidence == 0 })
+    }
+
+    @Test("An empty transcript produces no phrases")
+    func emptyTranscript() {
+        #expect(ForcedAlignment.align(phrases: [], in: "", to: perfect).isEmpty)
+    }
+
+    /// A recording whose length is unknown must not collapse every phrase to
+    /// zero, or nothing can be played at all.
+    @Test("A recording of unknown length still yields playable phrases")
+    func unknownDuration() {
+        let placed = aligned(RecognisedSpeech(segments: perfect.segments, duration: 0))
+        #expect(placed.count == 3)
+        #expect(placed.allSatisfy { $0.duration > 0 })
+    }
+
+    // MARK: - Punctuation
+
+    /// A recogniser invents its own punctuation, so matching the
+    /// transcript's commas against it would be aligning two authors' habits
+    /// rather than the same speech.
+    @Test("Punctuation differences do not disturb the alignment")
+    func punctuationIsIgnored() {
+        let loose = RecognisedSpeech(segments: [
+            segment("山村的孩子，需要他！", 0, 2),
+            segment("我在一个山村学校，当老师", 2, 5),
+            segment("教学任务很重", 5, 7),
+        ], duration: 7)
+        let placed = aligned(loose)
+        #expect(placed.allSatisfy { $0.confidence > 0.99 })
+        #expect(abs(placed[1].start - 2) < 0.4)
+    }
+}
+
+@Suite("Alignment tidying")
+struct ForcedAlignmentTidyTests {
+    private func phrase(_ index: Int, _ start: Double, _ end: Double) -> Phrase {
+        Phrase(index: index, start: start, end: end, textRange: index * 5 ..< index * 5 + 4)
+    }
+
+    @Test("Overlapping phrases are pushed apart")
+    func overlapsAreRemoved() {
+        let tidied = ForcedAlignment.tidy(
+            [phrase(0, 0, 5), phrase(1, 3, 8), phrase(2, 6, 10)],
+            duration: 10,
+        )
+        for (earlier, later) in zip(tidied, tidied.dropFirst()) {
+            #expect(earlier.end <= later.start + 0.000_1)
+        }
+    }
+
+    @Test("A phrase running backwards is given a forward span")
+    func backwardsPhraseIsRepaired() {
+        let tidied = ForcedAlignment.tidy([phrase(0, 5, 2), phrase(1, 6, 9)], duration: 10)
+        #expect(tidied[0].end > tidied[0].start)
+        #expect(tidied.allSatisfy { $0.duration >= ForcedAlignment.minimumDuration - 0.000_1 })
+    }
+
+    @Test("Times past the end of the recording are pulled back")
+    func beyondTheEndIsClamped() {
+        let tidied = ForcedAlignment.tidy([phrase(0, 0, 4), phrase(1, 8, 99)], duration: 10)
+        #expect(tidied.allSatisfy { $0.end <= 10.000_1 })
+    }
+
+    /// Review finding: stretching a short final phrase backwards to reach
+    /// the minimum could reach back over its predecessor, so two phrases
+    /// replayed the same audio and the reader transcribed the same words
+    /// twice without being told why.
+    @Test("Reaching back for a minimum never overlaps the phrase before")
+    func backwardStretchRespectsItsNeighbour() {
+        // The last phrase is a sliver at the very end of the recording, so
+        // the only room left is behind it.
+        let tidied = ForcedAlignment.tidy(
+            [phrase(0, 0, 9.95), phrase(1, 9.96, 9.97)],
+            duration: 10,
+        )
+        for (earlier, later) in zip(tidied, tidied.dropFirst()) {
+            #expect(earlier.end <= later.start + 0.000_1)
+        }
+        #expect(tidied.allSatisfy { $0.end <= 10.000_1 })
+    }
+
+    @Test("Tidying nothing yields nothing")
+    func empty() {
+        #expect(ForcedAlignment.tidy([], duration: 10).isEmpty)
+    }
+}
+
+/// Re-cutting a phrase that turned out too long once its times were known.
+@Suite("Alignment re-cutting")
+struct ForcedAlignmentRecutTests {
     /// A character budget is only a proxy for duration, and a poor one on
     /// material with pauses. Measured on a real 听力 recording: eighteen
     /// characters came to ten seconds of audio, and six phrases in eighteen
@@ -271,99 +436,5 @@ struct ForcedAlignmentTests {
             maximumDuration: nil,
         )
         #expect(placed.count == 1)
-    }
-
-    // MARK: - Degenerate input
-
-    /// No recognition at all — the model missing, or a recording of silence.
-    /// Equal slices let the reader step through and place the boundaries by
-    /// hand, and confidence zero is what tells the UI to offer that.
-    @Test("With nothing recognised the phrases are spread evenly")
-    func nothingRecognised() {
-        let placed = aligned(RecognisedSpeech(segments: [], duration: 9))
-        #expect(placed.count == 3)
-        #expect(placed.allSatisfy { $0.confidence == 0 })
-        #expect(abs(placed[0].end - 3) < 0.000_1)
-        #expect(abs(placed[2].end - 9) < 0.000_1)
-        for (earlier, later) in zip(placed, placed.dropFirst()) {
-            #expect(earlier.end <= later.start + 0.000_1)
-        }
-    }
-
-    @Test("A recogniser that heard only punctuation counts as nothing")
-    func punctuationOnlyRecognition() {
-        let placed = aligned(RecognisedSpeech(
-            segments: [segment("，。！", 0, 7)],
-            duration: 7,
-        ))
-        #expect(placed.count == 3)
-        #expect(placed.allSatisfy { $0.confidence == 0 })
-    }
-
-    @Test("An empty transcript produces no phrases")
-    func emptyTranscript() {
-        #expect(ForcedAlignment.align(phrases: [], in: "", to: perfect).isEmpty)
-    }
-
-    /// A recording whose length is unknown must not collapse every phrase to
-    /// zero, or nothing can be played at all.
-    @Test("A recording of unknown length still yields playable phrases")
-    func unknownDuration() {
-        let placed = aligned(RecognisedSpeech(segments: perfect.segments, duration: 0))
-        #expect(placed.count == 3)
-        #expect(placed.allSatisfy { $0.duration > 0 })
-    }
-
-    // MARK: - Punctuation
-
-    /// A recogniser invents its own punctuation, so matching the
-    /// transcript's commas against it would be aligning two authors' habits
-    /// rather than the same speech.
-    @Test("Punctuation differences do not disturb the alignment")
-    func punctuationIsIgnored() {
-        let loose = RecognisedSpeech(segments: [
-            segment("山村的孩子，需要他！", 0, 2),
-            segment("我在一个山村学校，当老师", 2, 5),
-            segment("教学任务很重", 5, 7),
-        ], duration: 7)
-        let placed = aligned(loose)
-        #expect(placed.allSatisfy { $0.confidence > 0.99 })
-        #expect(abs(placed[1].start - 2) < 0.4)
-    }
-}
-
-@Suite("Alignment tidying")
-struct ForcedAlignmentTidyTests {
-    private func phrase(_ index: Int, _ start: Double, _ end: Double) -> Phrase {
-        Phrase(index: index, start: start, end: end, textRange: index * 5 ..< index * 5 + 4)
-    }
-
-    @Test("Overlapping phrases are pushed apart")
-    func overlapsAreRemoved() {
-        let tidied = ForcedAlignment.tidy(
-            [phrase(0, 0, 5), phrase(1, 3, 8), phrase(2, 6, 10)],
-            duration: 10,
-        )
-        for (earlier, later) in zip(tidied, tidied.dropFirst()) {
-            #expect(earlier.end <= later.start + 0.000_1)
-        }
-    }
-
-    @Test("A phrase running backwards is given a forward span")
-    func backwardsPhraseIsRepaired() {
-        let tidied = ForcedAlignment.tidy([phrase(0, 5, 2), phrase(1, 6, 9)], duration: 10)
-        #expect(tidied[0].end > tidied[0].start)
-        #expect(tidied.allSatisfy { $0.duration >= ForcedAlignment.minimumDuration - 0.000_1 })
-    }
-
-    @Test("Times past the end of the recording are pulled back")
-    func beyondTheEndIsClamped() {
-        let tidied = ForcedAlignment.tidy([phrase(0, 0, 4), phrase(1, 8, 99)], duration: 10)
-        #expect(tidied.allSatisfy { $0.end <= 10.000_1 })
-    }
-
-    @Test("Tidying nothing yields nothing")
-    func empty() {
-        #expect(ForcedAlignment.tidy([], duration: 10).isEmpty)
     }
 }
