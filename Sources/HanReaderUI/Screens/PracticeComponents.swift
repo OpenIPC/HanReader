@@ -173,8 +173,11 @@ struct GradeRow: View {
                 .font(.caption)
             }
             Spacer()
+            // No shortcut here. ⌘→ belongs to the transport's own next
+            // button, which is on screen at the same time; binding both
+            // leaves SwiftUI to pick one, and a later change to either
+            // action would silently alter the other.
             Button("Next phrase") { model.advance(by: 1) }
-                .keyboardShortcut(.rightArrow, modifiers: .command)
                 .font(.caption)
         }
     }

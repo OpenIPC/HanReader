@@ -58,6 +58,30 @@ struct PracticeCheckingTests {
         #expect(model.attempts.isEmpty)
     }
 
+    /// Showing the answer and then copying it demonstrates nothing about
+    /// listening, so it must not drop the phrase out of the drill. The
+    /// marking still appears — that is what was asked for.
+    @Test("Checking after showing the answer marks but does not record")
+    func checkingAfterRevealingDoesNotRecord() async throws {
+        let model = try await Support.practising()
+        await model.load()
+        model.reveal()
+        model.typed = model.text
+        await model.check()
+
+        #expect(model.result?.accuracy == 1)
+        #expect(model.attempts.isEmpty)
+    }
+
+    @Test("Checking without having looked still records")
+    func checkingWithoutRevealingRecords() async throws {
+        let model = try await Support.practising()
+        await model.load()
+        model.typed = model.text
+        await model.check()
+        #expect(model.attempts[model.current]?.accuracy == 1)
+    }
+
     // MARK: - Checking
 
     @Test("Checking records the attempt and keeps the marking")

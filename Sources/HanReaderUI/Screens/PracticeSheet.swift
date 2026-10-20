@@ -19,6 +19,7 @@ struct PracticeSheet: View {
 
     @State private var model: PracticeModel?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         NavigationStack {
@@ -39,11 +40,15 @@ struct PracticeSheet: View {
         // A sheet sizes itself to its content, and the content here is a
         // short invitation before it is a practice screen — so without a
         // floor it opens narrow and then has to grow under the reader.
+        //
+        // Only where there is room for one. A phone is narrower than this
+        // floor, and a sheet that will not fit its window clips its own
+        // controls off the side.
         .frame(
-            minWidth: 620,
-            idealWidth: 760,
-            minHeight: 520,
-            idealHeight: 660,
+            minWidth: sizeClass == .compact ? nil : 620,
+            idealWidth: sizeClass == .compact ? nil : 760,
+            minHeight: sizeClass == .compact ? nil : 520,
+            idealHeight: sizeClass == .compact ? nil : 660,
         )
         .task {
             let next = PracticeModel(textID: textID, services: services, playback: playback)

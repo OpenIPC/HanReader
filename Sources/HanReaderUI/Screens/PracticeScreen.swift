@@ -85,7 +85,14 @@ struct PracticeScreen: View {
                 .font(ReaderFont.base(style))
                 .lineLimit(2 ... 4)
                 .focused($isWriting)
-                .onSubmit { Task { await model.check() } }
+                // Guarded the same way the Check button is. Return
+                // otherwise checks an empty field, which reveals the answer
+                // and writes down a zero — through a control the screen is
+                // showing as disabled.
+                .onSubmit {
+                    guard !model.typed.isEmpty else { return }
+                    Task { await model.check() }
+                }
             HStack(spacing: 12) {
                 Button("Check") { Task { await model.check() } }
                     .keyboardShortcut(.return, modifiers: .command)

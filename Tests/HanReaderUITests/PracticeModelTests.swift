@@ -130,6 +130,53 @@ struct PracticeModelTests {
         #expect(model.typed == "第一句话")
     }
 
+    // MARK: - Sharing the transport with the reader
+
+    /// The transport belongs to the window. Practice borrows it, so it has
+    /// to give it back where it found it rather than parked at zero.
+    @Test("Closing practice puts the narration back where it was")
+    func closingRestoresTheNarrationPosition() async throws {
+        let (services, id) = try await Support.services(content: Support.content)
+        try await services.library.savePhrases(
+            (0 ..< 3).map { Support.phrase($0) },
+            for: id,
+        )
+        let engine = SilentEngine()
+        let playback = PlaybackModel(engine: engine, session: SilentSession(), wait: { _ in })
+        playback.load(URL(fileURLWithPath: "/dev/null"), startingAt: 42)
+        #expect(playback.playhead == 42)
+
+        let model = PracticeModel(textID: id, services: services, playback: playback)
+        await model.load()
+        engine.onDuration?(90)
+        #expect(playback.playhead == 0)
+
+        await model.close()
+        #expect(playback.playhead == 42)
+    }
+
+    /// Clearing a segment removes its stop time, so a transport left
+    /// running would sail past the phrase it was playing.
+    @Test("Moving to another phrase stops the sound")
+    func movingStopsPlayback() async throws {
+        let (services, id) = try await Support.services(content: Support.content)
+        try await services.library.savePhrases(
+            (0 ..< 3).map { Support.phrase($0) },
+            for: id,
+        )
+        let engine = SilentEngine()
+        let playback = PlaybackModel(engine: engine, session: SilentSession(), wait: { _ in })
+        let model = PracticeModel(textID: id, services: services, playback: playback)
+        await model.load()
+        engine.onDuration?(30)
+
+        model.play()
+        #expect(playback.isPlaying)
+
+        model.advance(by: 1)
+        #expect(!playback.isPlaying)
+    }
+
     // MARK: - Before there are phrases
 
     @Test("A text with no audio says so rather than offering to listen")

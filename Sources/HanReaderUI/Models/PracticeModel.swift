@@ -70,6 +70,16 @@ final class PracticeModel {
     private let playback: PlaybackModel
     private var content = ""
     private var alignTask: Task<Void, Never>?
+    /// Where the narration was before practice took the transport over.
+    private var resumeAt: Double?
+    /// Which alignment run is the current one.
+    ///
+    /// A cancelled task keeps running until its next suspension point, and
+    /// its callbacks can still fire. Without a way to tell runs apart, a
+    /// stopped run finishing late can clear the handle of the run that
+    /// replaced it — leaving a second alignment going that nothing can
+    /// stop.
+    private var alignGeneration = 0
 
     init(textID: TextID, services: AppServices, playback: PlaybackModel) {
         self.textID = textID
@@ -95,6 +105,11 @@ final class PracticeModel {
                 phase = .noAudio
                 return
             }
+            // Where the reader was in the narration, so closing practice
+            // can put it back. Loading parks the playhead at zero, and the
+            // reader's own position is a resume point they did not ask to
+            // lose because they opened a different screen.
+            resumeAt = playback.playhead
             playback.load(file)
 
             phrases = try await services.library.phrases(for: textID)
@@ -110,7 +125,11 @@ final class PracticeModel {
     func close() async {
         alignTask?.cancel()
         alignTask = nil
+        playback.pause()
         playback.clearSegment()
+        if let resumeAt {
+            playback.seek(to: resumeAt)
+        }
     }
 
     /// The first phrase not yet passed, so reopening a text resumes rather
@@ -162,6 +181,11 @@ final class PracticeModel {
         typed = attempts[index]?.typed ?? ""
         result = nil
         isRevealed = false
+        // Paused before the segment is cleared, not after. Clearing it
+        // removes the stop time, so a transport left running would sail
+        // past the phrase it was playing and on into the next one, while
+        // the screen showed a different phrase entirely.
+        playback.pause()
         playback.clearSegment()
     }
 
@@ -192,23 +216,37 @@ final class PracticeModel {
     /// where it differed.
     func check() async {
         guard let phrase else { return }
+        // Read before the await, not after it. The reader can keep typing,
+        // or move to another phrase, while the dictionary is being asked —
+        // and marking the answer they have now against the phrase they had
+        // then would save a score under the wrong sentence.
+        let expected = text
+        let answer = typed
+        // Whether they had already looked. Taken here for the same reason.
+        let hadLooked = isRevealed
         // Fetched before marking rather than during it. `check` is a pure
         // function over a synchronous lookup, which is what makes it
         // testable without a database — so the asynchronous part happens
         // here, once, for every character either side might need.
         let readings = await services.dictionary.readings(
-            forCharacters: Array(text) + Array(typed),
+            forCharacters: Array(expected) + Array(answer),
         )
+        guard current == phrase.index else { return }
         let outcome = DictationComparison.check(
-            typed: typed,
-            against: text,
+            typed: answer,
+            against: expected,
             readings: { readings[$0] ?? [] },
         )
         result = outcome
         isRevealed = true
+        // A reader who showed the answer and then copied it has not
+        // demonstrated anything about their listening, and recording a pass
+        // would drop the phrase out of the drill on the strength of it.
+        // They still see the marking — that is what they asked for.
+        guard !hadLooked else { return }
         do {
             try await services.library.recordAttempt(
-                typed,
+                answer,
                 accuracy: outcome.listeningAccuracy,
                 at: phrase.index,
                 in: textID,
@@ -241,19 +279,25 @@ final class PracticeModel {
     /// rest possible.
     func align(installingModel: Bool = false) {
         guard alignTask == nil else { return }
+        alignGeneration += 1
+        let generation = alignGeneration
         alignTask = Task { [weak self] in
-            await self?.runAlignment(installingModel: installingModel)
-            self?.alignTask = nil
+            await self?.runAlignment(installingModel: installingModel, generation: generation)
+            guard let self, generation == alignGeneration else { return }
+            alignTask = nil
         }
     }
 
     func cancelAlignment() {
         alignTask?.cancel()
         alignTask = nil
+        // Bumped so that whatever the stopped run does on its way out
+        // belongs to a generation nobody is listening to any more.
+        alignGeneration += 1
         phase = phrases.isEmpty ? .needsAlignment : .ready
     }
 
-    private func runAlignment(installingModel: Bool) async {
+    private func runAlignment(installingModel: Bool, generation: Int) async {
         guard #available(macOS 26.0, iOS 26.0, *) else {
             phase = .unavailable(.systemTooOld)
             return
@@ -264,6 +308,7 @@ final class PracticeModel {
         }
         let file = AudioAttachment.file(for: track, in: services.locations)
         let aligner = SpeechAligner()
+        guard generation == alignGeneration else { return }
         phase = .aligning(SpeechAlignmentProgress(fraction: nil))
 
         do {
@@ -271,7 +316,7 @@ final class PracticeModel {
                 to: file,
                 installIfNeeded: installingModel,
                 progress: { [weak self] progress in
-                    Task { @MainActor in self?.report(progress) }
+                    Task { @MainActor in self?.report(progress, from: generation) }
                 },
             )
             try Task.checkCancellation()
@@ -286,21 +331,29 @@ final class PracticeModel {
                 to: heard,
             )
             try await services.library.savePhrases(placed, for: textID)
+            // Checked again after the write, not only after the listening.
+            // Stop pressed while the database was busy would otherwise let
+            // the run finish and announce itself ready.
+            try Task.checkCancellation()
+            guard generation == alignGeneration else { return }
             phrases = try await services.library.phrases(for: textID)
             attempts = try await services.library.attempts(for: textID)
             current = firstUnfinished
             phase = .ready
         } catch is CancellationError {
+            guard generation == alignGeneration else { return }
             phase = phrases.isEmpty ? .needsAlignment : .ready
         } catch let problem as SpeechAlignmentProblem {
+            guard generation == alignGeneration else { return }
             phase = .unavailable(obstacle(for: problem))
         } catch {
+            guard generation == alignGeneration else { return }
             phase = .unavailable(.failed(error.localizedDescription))
         }
     }
 
-    private func report(_ progress: SpeechAlignmentProgress) {
-        guard case .aligning = phase else { return }
+    private func report(_ progress: SpeechAlignmentProgress, from generation: Int) {
+        guard generation == alignGeneration, case .aligning = phase else { return }
         phase = .aligning(progress)
     }
 
