@@ -13,6 +13,25 @@ it needs to read like release notes rather than a commit log.
 
 ### Added
 
+- Listening and dictation practice (听力 / 听写). A text with a narration opens
+  a practice screen that plays one sentence at a time, repeated as many times
+  as you ask with a gap to write in, and marks what you typed against what was
+  said. Sentence boundaries are found by listening to the recording once, on
+  this device — the audio is not sent anywhere — and aligning what was heard
+  against the transcript already in your library, so a recogniser's mistakes
+  are bridged by the words either side of them rather than becoming yours.
+  The transcript stays hidden until you check, which is the whole point.
+- Dictation marking tells the three kinds of wrong apart. A character that
+  sounds exactly like the right one — 真 for 针, both `zhen1` — is marked as a
+  homophone, which is an input-method slip rather than a listening mistake and
+  does not keep the sentence in the drill. A character with the right syllable
+  and the wrong tone — 是 for 时 — is marked separately, because tones are what
+  an ear loses first. Everything else is a mishearing. No other tool this
+  project was measured against can make that distinction; HanReader can
+  because the readings are already open.
+- Sentences can be graded easy, middling or hard, and a filter drills only the
+  ones still worth drilling: graded hard, never attempted, or last attempted
+  below the pass mark.
 - Per-text audio. Attach a narration to any text and it plays in a transport
   below the reader, with a scrubber, ten-second skips, five speeds and lock
   screen and Control Centre controls. The playhead is remembered, so the next
