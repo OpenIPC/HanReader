@@ -110,7 +110,20 @@ dict-force: ## Recompile the bundled dictionary unconditionally
 
 # ── Xcode project ────────────────────────────────────────────────────────────
 
-generate: $(TOOLS_STAMP) $(CEDICT_OUTPUT) ## Regenerate the Xcode project from project.yml
+# The dictionary is built here only when it is **missing**, through a test in
+# the recipe rather than a prerequisite -- including an order-only one, which
+# still updates the container it names and only stops the timestamp
+# propagating.
+#
+# Running the app is the command that happens dozens of times an hour, and the
+# generator links three whole modules: an edit to anything in HanReaderCore,
+# HanReaderPersistence or the generator itself made every `make run` spend
+# fifteen seconds recompiling a container whose bytes almost never change.
+# `make dict` keeps the strict dependency and CI has a job of its own, so a
+# stale container still cannot ship -- and `make run` says so when the one on
+# disk is older than its sources.
+generate: $(TOOLS_STAMP) ## Regenerate the Xcode project from project.yml
+	@[ -f $(CEDICT_OUTPUT) ] || $(MAKE) --no-print-directory dict
 	@# One shell block on purpose. Make runs each recipe line in its own shell,
 	@# so an early `exit 0` in a guard would end only that line and the
 	@# following commands would still run.
@@ -132,6 +145,10 @@ open: generate ## Generate the project and open it in Xcode
 # ── Build and run ────────────────────────────────────────────────────────────
 
 run: generate ## Build and launch the macOS app
+	@stale=$$(find $(CEDICT_DEPS) -newer $(CEDICT_OUTPUT) 2>/dev/null | head -1); \
+		[ -z "$$stale" ] || printf \
+		'note: the bundled dictionary is older than %s -- run `make dict` to rebuild it.\n' \
+		"$$stale"
 	@if [ ! -d $(PROJECT) ]; then \
 		printf 'No app target yet. Until milestone M1 PR 3, use:  make test\n'; \
 		exit 1; \
@@ -142,6 +159,10 @@ run: generate ## Build and launch the macOS app
 	@open "$(BUILD_DIR)/Build/Products/Debug/HanReader.app"
 
 run-ios: generate ## Build and launch the app in the iOS Simulator
+	@stale=$$(find $(CEDICT_DEPS) -newer $(CEDICT_OUTPUT) 2>/dev/null | head -1); \
+		[ -z "$$stale" ] || printf \
+		'note: the bundled dictionary is older than %s -- run `make dict` to rebuild it.\n' \
+		"$$stale"
 	@# Captured before grepping. Piping into `grep -q` lets it close the pipe on
 	@# the first match, simctl takes SIGPIPE, and under pipefail the probe reports
 	@# failure -- telling a machine that HAS a runtime that it has none.
