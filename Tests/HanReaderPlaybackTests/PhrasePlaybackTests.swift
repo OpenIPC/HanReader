@@ -35,23 +35,29 @@ struct PhrasePlaybackTests {
     }
 
     /// A loaded transport with its engine and its record of waits.
-    private struct Bench {
+    struct Bench {
         let engine: SpyEngine
         let model: PlaybackModel
         let waits: Waits
+        let session: SpySession
     }
 
-    private func bench(duration: Double = 100) -> Bench {
+    func bench(duration: Double = 100) -> Bench {
+        Self.makeBench(duration: duration)
+    }
+
+    static func makeBench(duration: Double = 100) -> Bench {
         let engine = SpyEngine()
         let waits = Waits()
+        let session = SpySession()
         let model = PlaybackModel(
             engine: engine,
-            session: SpySession(),
+            session: session,
             wait: { seconds in waits.record(seconds) },
         )
         model.load(URL(fileURLWithPath: "/tmp/track.m4a"))
         engine.declareDuration(duration)
-        return Bench(engine: engine, model: model, waits: waits)
+        return Bench(engine: engine, model: model, waits: waits, session: session)
     }
 
     // MARK: - Stopping where the phrase stops
@@ -103,7 +109,7 @@ struct PhrasePlaybackTests {
     /// Once through is pressing play on a phrase, and nothing more should
     /// happen when it ends.
     @Test("A phrase played once stops and says so")
-    func playedOnce() {
+    func playedOnce() async {
         let rig = bench()
         let (engine, model) = (rig.engine, rig.model)
         var finished = 0
@@ -112,8 +118,11 @@ struct PhrasePlaybackTests {
         model.play(segment: 12 ..< 17)
         #expect(engine.playCount == 1)
         engine.reachEnd()
-
         #expect(!model.isPlaying)
+
+        // Completion arrives after the writing gap, not the instant the
+        // audio stops — so it is awaited rather than assumed.
+        await model.awaitPendingRepeat()
         #expect(finished == 1)
         #expect(engine.playCount == 1)
     }
@@ -141,6 +150,7 @@ struct PhrasePlaybackTests {
         #expect(finished == 0)
 
         engine.reachEnd()
+        await model.awaitPendingRepeat()
         #expect(engine.playCount == 3)
         #expect(finished == 1)
         #expect(!model.isPlaying)
@@ -260,5 +270,165 @@ struct PhrasePlaybackTests {
         #expect(!model.isPlaying)
         model.resumeAfterSpeech()
         #expect(model.isPlaying)
+    }
+}
+
+/// Nothing outlives the gap.
+///
+/// A repeat waiting out its silence is a command still pending, and every
+/// one of these is a way the reader can change their mind in between.
+@MainActor
+@Suite("Drill cancellation")
+struct DrillCancellationTests {
+    private func bench(duration: Double = 100) -> PhrasePlaybackTests.Bench {
+        PhrasePlaybackTests.makeBench(duration: duration)
+    }
+
+    /// The worst of the seven: headphones pulled out during the silence,
+    /// and a moment later the phrase plays through whatever speaker is
+    /// left. `.outputGone` returned early because nothing was playing.
+    @Test("Losing the output during the gap cancels the repeat")
+    func outputGoneDuringGapCancels() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        rig.session.interrupt(.outputGone)
+        await model.awaitPendingRepeat()
+        #expect(engine.playCount == 1)
+        #expect(!model.isPlaying)
+    }
+
+    @Test("An interruption during the gap cancels the repeat")
+    func interruptionDuringGapCancels() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        rig.session.interrupt(.began)
+        await model.awaitPendingRepeat()
+        #expect(engine.playCount == 1)
+    }
+
+    /// A repeat waking against another text's recording would seek it to
+    /// the previous phrase's bounds and start it there.
+    @Test("Loading another recording cancels the repeat and the phrase")
+    func loadingDuringGapCancels() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        model.load(URL(fileURLWithPath: "/tmp/other.m4a"))
+        await model.awaitPendingRepeat()
+        #expect(model.segment == nil)
+        #expect(engine.playCount == 1)
+    }
+
+    /// Pressing play during the gap means play now — not play now *and*
+    /// again in half a second.
+    @Test("Play during the gap cancels the repeat")
+    func playDuringGapCancels() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        model.play()
+        await model.awaitPendingRepeat()
+        #expect(engine.playCount == 2)
+        #expect(model.isPlaying)
+    }
+
+    /// And moving the playhead means the reader has gone somewhere else.
+    @Test("Seeking during the gap cancels the repeat")
+    func seekingDuringGapCancels() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        model.seek(to: 50)
+        await model.awaitPendingRepeat()
+        #expect(engine.playCount == 1)
+        // Outside the phrase, so phrase playback is left behind rather than
+        // leaving a stop time somewhere unrelated.
+        #expect(model.segment == nil)
+    }
+
+    /// Seeking *inside* the phrase is the case that needs the cancellation:
+    /// the segment survives, so a pending repeat would drag the playhead
+    /// back to its start and play it again over the reader.
+    @Test("Seeking inside the phrase keeps it but still cancels the repeat")
+    func seekingInsideKeepsTheSegment() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        engine.reachEnd()
+
+        model.seek(to: 15)
+        await model.awaitPendingRepeat()
+
+        #expect(model.segment == 12 ..< 17)
+        #expect(model.playhead == 15)
+        #expect(engine.playCount == 1)
+    }
+
+    /// Pausing from inside the state callback used to find no task to
+    /// cancel, because the repeat was scheduled after the callback ran.
+    @Test("Pausing from the state callback stops the repeat")
+    func pauseFromStateCallbackStops() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 3, gap: 0.5))
+        // Pauses once, the way a view would when it sees playback stop.
+        var hasPaused = false
+        model.onStateChange = { [weak model] in
+            guard !hasPaused, model?.isPlaying == false else { return }
+            hasPaused = true
+            model?.pause()
+        }
+        engine.reachEnd()
+        await model.awaitPendingRepeat()
+        #expect(engine.playCount == 1)
+    }
+
+    /// The gap is the writing interval, so it belongs after the last pass
+    /// too. A caller advancing from the callback would otherwise move on
+    /// the instant the audio stopped.
+    @Test("The last pass is followed by the gap before completion")
+    func lastPassWaitsTheGapToo() async {
+        let rig = bench()
+        let (engine, model, waits) = (rig.engine, rig.model, rig.waits)
+        var finished = 0
+        model.onSegmentFinished = { finished += 1 }
+
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 1, gap: 2))
+        engine.reachEnd()
+        #expect(finished == 0)
+
+        await model.awaitPendingRepeat()
+        #expect(waits.all == [2])
+        #expect(finished == 1)
+    }
+
+    /// And a phrase the reader has already left must not report completion
+    /// for the one they chose instead.
+    @Test("An abandoned phrase does not report completion")
+    func abandonedPhraseDoesNotReport() async {
+        let rig = bench()
+        let (engine, model) = (rig.engine, rig.model)
+        var finished = 0
+        model.onSegmentFinished = { finished += 1 }
+
+        model.play(segment: 12 ..< 17, drill: .init(repeats: 1, gap: 1))
+        engine.reachEnd()
+        model.play(segment: 30 ..< 35)
+        await model.awaitPendingRepeat()
+
+        #expect(finished == 0)
+        #expect(model.segment == 30 ..< 35)
     }
 }

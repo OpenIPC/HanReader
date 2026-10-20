@@ -139,10 +139,10 @@ public final class PlaybackModel {
     /// confusion: a system interruption that never invites us back leaves its
     /// flag set, and with one shared flag the next word the reader tapped
     /// would end by resuming narration the system had taken away.
-    @ObservationIgnored private var pausedForSpeech = false
+    @ObservationIgnored var pausedForSpeech = false
 
     /// Paused by the system — a call, an alarm, another app.
-    @ObservationIgnored private var pausedByInterruption = false
+    @ObservationIgnored var pausedByInterruption = false
 
     @ObservationIgnored let engine: any AudioEngine
     @ObservationIgnored private let session: any PlaybackSession
@@ -202,6 +202,13 @@ public final class PlaybackModel {
     /// sound, and the stored playhead is a resume point rather than an
     /// instruction.
     public func load(_ url: URL, startingAt time: Double? = nil) {
+        // Before anything else. A repeat still waiting out its gap would
+        // otherwise wake against the *new* item, seek it to the old
+        // phrase's bounds and start it there — and the finish that followed
+        // would be handled as a phrase pass of a phrase from another text.
+        cancelDrill()
+        segment = nil
+        engine.setStopTime(nil)
         engine.load(url)
         state = .ready
         duration = engine.duration
@@ -246,6 +253,11 @@ public final class PlaybackModel {
 
     public func play() {
         guard state == .ready else { return }
+        // Pressing play during the gap between repeats means "play now", so
+        // the repeat that was going to start by itself is abandoned.
+        // Without this both happen: the engine is started here and the
+        // pending task restarts the phrase a moment later.
+        cancelDrill()
         // The session is activated here and nowhere else. Activating it at
         // launch would interrupt whatever the reader was listening to, for an
         // app that might never play a sound.
@@ -268,10 +280,11 @@ public final class PlaybackModel {
         // silence, and then hears the phrase start again. Pausing has to
         // mean "stop", whether or not sound is coming out at this instant.
         cancelDrill()
-        guard isPlaying else {
-            onStateChange?()
-            return
-        }
+        // No notification on this path, deliberately. Nothing observable
+        // changed — `isPlaying` was already false — and announcing it is a
+        // way to recurse for ever: a listener that responds to a state
+        // change by pausing would be called by its own pause.
+        guard isPlaying else { return }
         engine.pause()
         isPlaying = false
         // Deliberate, so neither the system nor a finished utterance may
@@ -297,7 +310,18 @@ public final class PlaybackModel {
     /// Moves the playhead and tells everyone, in one step.
     public func seek(to time: Double) {
         guard state == .ready else { return }
+        // The reader has moved the playhead themselves, so a repeat waiting
+        // to drag it back to the phrase's start is no longer what they
+        // asked for.
+        cancelDrill()
         let target = clamp(time)
+        // And moving outside the phrase leaves phrase playback altogether,
+        // rather than leaving a stop time that would halt them somewhere
+        // unrelated to where they went.
+        if let segment, !segment.contains(target) {
+            self.segment = nil
+            engine.setStopTime(nil)
+        }
         engine.seek(to: target)
         playhead = target
         // Published immediately rather than left to the next report, or the
@@ -351,39 +375,6 @@ public final class PlaybackModel {
         engine.play()
         isPlaying = true
         onStateChange?()
-    }
-
-    private func handle(_ interruption: PlaybackInterruption) {
-        switch interruption {
-        case .began:
-            guard isPlaying else { return }
-            engine.pause()
-            isPlaying = false
-            pausedByInterruption = true
-            onStateChange?()
-        case .ended:
-            guard pausedByInterruption, state == .ready else { return }
-            pausedByInterruption = false
-            engine.play()
-            isPlaying = true
-            onStateChange?()
-        case .outputGone:
-            // Headphones pulled out. Pausing is not politeness, it is the
-            // difference between a quiet room and the reader's audio playing
-            // through the speaker to everyone around them — and it must not
-            // be resumable automatically, or plugging back in starts it in
-            // the open.
-            //
-            // The reasons are cleared *before* the guard, not after it: the
-            // output can be lost while already paused by an interruption,
-            // and leaving that reason set means the interruption ending
-            // resumes narration into a room with no headphones in it.
-            clearPauseReasons()
-            guard isPlaying else { return }
-            engine.pause()
-            isPlaying = false
-            onStateChange?()
-        }
     }
 
     // MARK: - Engine reports

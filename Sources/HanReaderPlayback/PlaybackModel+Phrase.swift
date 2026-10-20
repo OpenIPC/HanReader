@@ -45,25 +45,45 @@ extension PlaybackModel {
     }
 
     /// One pass through the phrase ended, at exactly its end time.
+    ///
+    /// The gap is taken **after every pass, including the last**. It is the
+    /// interval the learner writes in, so skipping it on the final pass
+    /// means a caller that advances from `onSegmentFinished` moves on the
+    /// instant the audio stops — no time to answer, which is the one thing
+    /// the drill exists to provide.
     func finishSegmentPass() {
         engine.pause()
         isPlaying = false
         clearPauseReasons()
         repeatsPlayed += 1
-        guard repeatsPlayed < drill.repeats else {
-            onStateChange?()
-            onSegmentFinished?()
-            return
-        }
-        onStateChange?()
+        let wasLast = repeatsPlayed >= drill.repeats
+        let phrase = segment
+
+        // Scheduled *before* the state callback runs, so that a `pause()`
+        // issued from inside it finds a task to cancel. Assigning afterwards
+        // meant cancellation found nothing and the repeat started anyway,
+        // despite the reader having paused.
         drillTask = Task { [weak self] in
-            guard let gap = self?.drill.gap, let wait = self?.wait else { return }
-            if gap > 0 {
-                await wait(gap)
+            guard let self else { return }
+            if drill.gap > 0 {
+                await wait(drill.gap)
             }
             guard !Task.isCancelled else { return }
-            self?.playSegmentOnce()
+            guard wasLast else {
+                playSegmentOnce()
+                return
+            }
+            // Belt and braces, and said plainly: every path that changes
+            // the segment today also cancels this task, so the check above
+            // already covers it and mutation testing shows this line is
+            // unreachable. It is kept because `segment` has an internal
+            // setter and the cost of being wrong here is a listener told
+            // "finished" about a phrase the reader has already left —
+            // which would advance them past the one they just chose.
+            guard segment == phrase else { return }
+            onSegmentFinished?()
         }
+        onStateChange?()
     }
 
     /// Awaits a repeat that is currently waiting out its gap.
