@@ -116,27 +116,35 @@ nonisolated enum PracticeTestSupport {
             )]
         }
     }
+}
 
-    /// A transport that makes no sound, for tests about practising rather
-    /// than about playing.
-    final class SilentEngine: AudioEngine {
-        var duration = 60.0
-        var currentTime = 0.0
-        var onTime: ((Double) -> Void)?
-        var onDuration: ((Double) -> Void)?
-        var onFinish: (() -> Void)?
+/// A transport that makes no sound, for tests about practising rather than
+/// about playing.
+///
+/// At file scope and `@MainActor`, like `SpyEngine` in the playback tests,
+/// rather than nested in the namespace above. Nested inside a `nonisolated`
+/// type its members would still take this target's `MainActor` default
+/// isolation while its implicit initialiser stayed nonisolated — which
+/// Xcode 26.6 rejects outright and a later compiler quietly accepts.
+@MainActor
+final class SilentEngine: AudioEngine {
+    var duration = 60.0
+    var currentTime = 0.0
+    var onTime: ((Double) -> Void)?
+    var onDuration: ((Double) -> Void)?
+    var onFinish: (() -> Void)?
 
-        func load(_: URL) {}
-        func play() {}
-        func pause() {}
-        func seek(to _: Double) {}
-        func setRate(_: Double) {}
-        func setStopTime(_: Double?) {}
-    }
+    func load(_: URL) {}
+    func play() {}
+    func pause() {}
+    func seek(to _: Double) {}
+    func setRate(_: Double) {}
+    func setStopTime(_: Double?) {}
+}
 
-    final class SilentSession: PlaybackSession {
-        var onInterruption: ((PlaybackInterruption) -> Void)?
-        func activate() throws {}
-        func deactivate() {}
-    }
+@MainActor
+final class SilentSession: PlaybackSession {
+    var onInterruption: ((PlaybackInterruption) -> Void)?
+    func activate() throws {}
+    func deactivate() {}
 }
